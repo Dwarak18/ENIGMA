@@ -1,12 +1,10 @@
-version: "3.9"
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  ENIGMA – Docker Compose
 #
 #  Services:
 #    db        – PostgreSQL 15
 #    backend   – Node.js API + WebSocket
-#    nginx     – Serves trng-dashboard.html + reverse-proxies API & WS
+#    frontend  – Builds Vite/React app, serves via nginx, proxies API & WS
 #
 #  Usage:
 #    docker compose up -d --build
@@ -62,18 +60,15 @@ services:
     expose:
       - "3000"
 
-  # ── Nginx – serves dashboard + proxies API/WS ──────────────────────────────
-  nginx:
-    image: nginx:1.25-alpine
-    container_name: enigma_nginx
+  # ── Frontend – builds React/Vite app + proxies API/WS via nginx ──────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: enigma_frontend
     restart: unless-stopped
     ports:
       - "80:80"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      # Serve the single-file dashboard
-      - ./trng-dashboard.html:/usr/share/nginx/html/index.html:ro
     depends_on:
       - backend
     networks:
