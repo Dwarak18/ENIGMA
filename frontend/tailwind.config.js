@@ -1,0 +1,24 @@
+/** @type {import('tailwindcss').Config} */
+export default {
+  content: [
+    './index.html',
+    './src/**/*.{js,jsx,ts,tsx}',
+  ],
+  theme: {
+    extend: {
+      fontFamily: {
+        sans: ['Inter', 'system-ui', 'sans-serif'],
+        mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+      },
+      colors: {
+        gray: {
+          950: '#030712',
+        },
+      },
+      animation: {
+        'pulse-slow': 'pulse 3s ease-in-out infinite',
+      },
+    },
+  },
+  plugins: [],
+};

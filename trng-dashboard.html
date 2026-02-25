@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TRNG Control System - Hardware-Backed Entropy Dashboard</title>
+  
+  <!-- React and Dependencies -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Framer Motion -->
+  <script src="https://cdn.jsdelivr.net/npm/framer-motion@10/dist/framer-motion.js"></script>
+  
+  <style>
+    /* Custom Font Import - Space Mono for that technical/aerospace feel */
+    @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+    
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'JetBrains Mono', 'Space Mono', monospace;
+      background-color: #0a0a0a;
+      color: #fafafa;
+      overflow-x: hidden;
+    }
+    
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    
+    ::-webkit-scrollbar-track {
+      background: #18181b;
+    }
+    
+    ::-webkit-scrollbar-thumb {
+      background: #3f3f46;
+      border-radius: 4px;
+    }
+    
+    ::-webkit-scrollbar-thumb:hover {
+      background: #52525b;
+    }
+    
+    /* Animations */
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    @keyframes slideInRight {
+      from {
+        transform: translateX(20px);
+        opacity: 0;
+      }
+      to {
+        transform: translateX(0);
+        opacity: 1;
+      }
+    }
+    
+    .animate-pulse {
+      animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    
+    /* Utility Classes */
+    .font-mono { font-family: 'JetBrains Mono', monospace; }
+    .uppercase { text-transform: uppercase; }
+    .tracking-wider { letter-spacing: 0.05em; }
+    .tracking-widest { letter-spacing: 0.1em; }
+    .transition-all { transition: all 0.2s ease; }
+    .cursor-pointer { cursor: pointer; }
+    
+    /* Component Styles */
+    .status-badge {
+      display: inline-block;
+      padding: 4px 12px;
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      border-radius: 2px;
+      font-weight: 500;
+    }
+    
+    .card {
+      background: rgba(24, 24, 27, 0.5);
+      border: 1px solid rgba(63, 63, 70, 0.5);
+      border-radius: 2px;
+      padding: 24px;
+    }
+    
+    .nav-button {
+      width: 100%;
+      text-align: left;
+      padding: 12px 16px;
+      font-size: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      border-radius: 2px;
+      transition: all 0.2s ease;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      border: none;
+      background: transparent;
+      color: #a1a1aa;
+      cursor: pointer;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    
+    .nav-button:hover {
+      color: #e4e4e7;
+      background: rgba(39, 39, 42, 0.5);
+    }
+    
+    .nav-button.active {
+      background: #2563eb;
+      color: white;
+    }
+    
+    input, select {
+      background: #09090b;
+      border: 1px solid #3f3f46;
+      padding: 8px 16px;
+      font-size: 14px;
+      font-family: 'JetBrains Mono', monospace;
+      color: #d4d4d8;
+      border-radius: 2px;
+      outline: none;
+    }
+    
+    input:focus, select:focus {
+      border-color: #2563eb;
+    }
+    
+    button {
+      font-family: 'JetBrains Mono', monospace;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    
+    button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    
+    th {
+      text-align: left;
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: #71717a;
+      padding: 16px;
+      border-bottom: 1px solid #27272a;
+      font-weight: 600;
+    }
+    
+    td {
+      padding: 16px;
+      border-bottom: 1px solid rgba(39, 39, 42, 0.5);
+      font-size: 14px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    
+    tr:hover {
+      background: rgba(39, 39, 42, 0.2);
+    }
+    
+    code {
+      font-family: 'JetBrains Mono', monospace;
+      word-break: break-all;
+    }
+    
+    /* Grid system */
+    .grid { display: grid; }
+    .gap-2 { gap: 8px; }
+    .gap-3 { gap: 12px; }
+    .gap-4 { gap: 16px; }
+    .gap-6 { gap: 24px; }
+    
+    .grid-cols-2 { grid-template-columns: repeat(2, 1fr); }
+    .grid-cols-3 { grid-template-columns: repeat(3, 1fr); }
+    .grid-cols-4 { grid-template-columns: repeat(4, 1fr); }
+    .grid-cols-8 { grid-template-columns: repeat(8, 1fr); }
+    
+    .col-span-2 { grid-column: span 2; }
+    
+    /* Flexbox */
+    .flex { display: flex; }
+    .flex-1 { flex: 1; }
+    .items-center { align-items: center; }
+    .items-baseline { align-items: baseline; }
+    .justify-between { justify-content: space-between; }
+    
+    /* Spacing */
+    .space-y-1 > * + * { margin-top: 4px; }
+    .space-y-2 > * + * { margin-top: 8px; }
+    .space-y-4 > * + * { margin-top: 16px; }
+    .space-y-6 > * + * { margin-top: 24px; }
+    
+    .p-2 { padding: 8px; }
+    .p-3 { padding: 12px; }
+    .p-4 { padding: 16px; }
+    .p-6 { padding: 24px; }
+    .px-3 { padding-left: 12px; padding-right: 12px; }
+    .px-4 { padding-left: 16px; padding-right: 16px; }
+    .px-6 { padding-left: 24px; padding-right: 24px; }
+    .py-1 { padding-top: 4px; padding-bottom: 4px; }
+    .py-2 { padding-top: 8px; padding-bottom: 8px; }
+    .py-3 { padding-top: 12px; padding-bottom: 12px; }
+    .py-4 { padding-top: 16px; padding-bottom: 16px; }
+    
+    .m-0 { margin: 0; }
+    .mt-1 { margin-top: 4px; }
+    .mt-2 { margin-top: 8px; }
+    .mt-3 { margin-top: 12px; }
+    .mt-4 { margin-top: 16px; }
+    .mb-2 { margin-bottom: 8px; }
+    .mb-3 { margin-bottom: 12px; }
+    .mb-4 { margin-bottom: 16px; }
+    .mb-6 { margin-bottom: 24px; }
+    
+    /* Text */
+    .text-xs { font-size: 12px; }
+    .text-sm { font-size: 14px; }
+    .text-2xl { font-size: 24px; }
+    .text-xl { font-size: 20px; }
+    
+    .font-bold { font-weight: 700; }
+    .font-semibold { font-weight: 600; }
+    
+    .text-center { text-align: center; }
+    
+    /* Layout */
+    .relative { position: relative; }
+    .absolute { position: absolute; }
+    .fixed { position: fixed; }
+    .sticky { position: sticky; }
+    .top-0 { top: 0; }
+    .bottom-0 { bottom: 0; }
+    .left-0 { left: 0; }
+    .right-0 { right: 0; }
+    .z-40 { z-index: 40; }
+    .z-50 { z-index: 50; }
+    
+    .overflow-hidden { overflow: hidden; }
+    .overflow-x-auto { overflow-x: auto; }
+    
+    .rounded-sm { border-radius: 2px; }
+    .rounded-full { border-radius: 9999px; }
+    
+    .border { border-width: 1px; }
+    .border-t { border-top-width: 1px; }
+    .border-b { border-bottom-width: 1px; }
+    .border-r { border-right-width: 1px; }
+    .border-l-4 { border-left-width: 4px; }
+    
+    /* Width/Height */
+    .w-2 { width: 8px; }
+    .w-4 { width: 16px; }
+    .w-5 { width: 20px; }
+    .w-8 { width: 32px; }
+    .w-12 { width: 48px; }
+    .w-64 { width: 256px; }
+    .w-full { width: 100%; }
+    
+    .h-1 { height: 4px; }
+    .h-2 { height: 8px; }
+    .h-5 { height: 20px; }
+    .h-8 { height: 32px; }
+    .h-32 { height: 128px; }
+    
+    .min-h-screen { min-height: 100vh; }
+    
+    /* Special components */
+    .backdrop-blur-sm { backdrop-filter: blur(4px); }
+    
+    .aspect-video {
+      aspect-ratio: 16 / 9;
+    }
+    
+    /* Loading animation for lava lamp */
+    @keyframes lavaFlow {
+      0%, 100% {
+        transform: scale(1) rotate(0deg);
+      }
+      25% {
+        transform: scale(1.2) rotate(5deg);
+      }
+      50% {
+        transform: scale(0.9) rotate(-5deg);
+      }
+      75% {
+        transform: scale(1.1) rotate(3deg);
+      }
+    }
+    
+    .lava-lamp {
+      animation: lavaFlow 8s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+    const { motion, AnimatePresence } = window.Motion;
+
+    // ========================================================================
+    // UTILITY FUNCTIONS
+    // ========================================================================
+
+    const formatHash = (hash, length = 12) => 
+      `${hash.slice(0, length)}...${hash.slice(-8)}`;
+
+    const formatTimestamp = (date) => 
+      date ? new Date(date).toISOString().replace('T', ' ').slice(0, 19) : 'N/A';
+
+    const getStatusColor = (status) => {
+      const colors = {
+        idle: '#64748b',
+        processing: '#3b82f6',
+        success: '#10b981',
+        healthy: '#10b981',
+        warning: '#f59e0b',
+        degraded: '#f59e0b',
+        error: '#ef4444',
+        critical: '#dc2626',
+        signed: '#10b981',
+        unsigned: '#71717a',
+        failed: '#ef4444',
+        not_anchored: '#71717a',
+        pending: '#f59e0b',
+        confirmed: '#10b981'
+      };
+      return colors[status] || '#64748b';
+    };
+
+    const generateMockHash = () => 
+      `0x${Math.random().toString(16).substring(2, 66)}`;
+
+    const generateMockHardwareStatus = () => ({
+      camera: {
+        connected: Math.random() > 0.1,
+        resolution: '1920x1080',
+        fps: 30,
+        lastCapture: new Date(Date.now() - Math.random() * 10000)
+      },
+      esp32: {
+        online: Math.random() > 0.05,
+        lastHeartbeat: new Date(Date.now() - Math.random() * 5000),
+        latency: 12 + Math.random() * 8
+      },
+      ds3231: {
+        synced: Math.random() > 0.02,
+        drift: (Math.random() - 0.5) * 200,
+        lastSync: new Date(Date.now() - Math.random() * 60000)
+      },
+      atecc608a: {
+        present: Math.random() > 0.05,
+        lastSigning: new Date(Date.now() - Math.random() * 10000),
+        firmwareVersion: 'v2.1.3'
+      }
+    });
+
+    const generateMockPipeline = () => [
+      { id: 'capture', name: 'Image Capture', status: 'success', lastExecution: new Date(), latency: 45, successRate: 99.8, count: 8642 },
+      { id: 'preprocess', name: 'Pre-processing', status: 'success', lastExecution: new Date(), latency: 120, successRate: 99.9, count: 8642 },
+      { id: 'trng', name: 'TRNG Generation', status: 'processing', lastExecution: new Date(), latency: 89, successRate: 99.7, count: 8640 },
+      { id: 'hashing', name: 'Hashing', status: 'success', lastExecution: new Date(), latency: 23, successRate: 100, count: 8640 },
+      { id: 'timestamp', name: 'Trusted Time', status: 'success', lastExecution: new Date(), latency: 15, successRate: 99.9, count: 8640 },
+      { id: 'signing', name: 'HW Signing', status: 'success', lastExecution: new Date(), latency: 67, successRate: 99.6, count: 8638 },
+      { id: 'ledger', name: 'Ledger Entry', status: 'success', lastExecution: new Date(), latency: 34, successRate: 100, count: 8638 },
+      { id: 'anchor', name: 'Blockchain Anchor', status: 'success', lastExecution: new Date(), latency: 2340, successRate: 98.2, count: 8520 }
+    ];
+
+    const generateMockLedgerEntries = (count) => 
+      Array.from({ length: count }, (_, i) => ({
+        id: `entry-${8640 - i}`,
+        frameIndex: 8640 - i,
+        timestamp: new Date(Date.now() - i * 10000),
+        ds3231Timestamp: new Date(Date.now() - i * 10000 + (Math.random() - 0.5) * 100),
+        imageHash: generateMockHash(),
+        rngHash: generateMockHash(),
+        metadataHash: generateMockHash(),
+        combinedHash: generateMockHash(),
+        signatureStatus: Math.random() > 0.05 ? 'signed' : 'unsigned',
+        blockchainStatus: i < 5 ? 'pending' : Math.random() > 0.1 ? 'confirmed' : 'not_anchored',
+        blockchainTxHash: i < 5 ? undefined : generateMockHash(),
+        entropyScore: 65 + Math.random() * 30,
+        anomalyFlag: Math.random() < 0.02
+      }));
+
+    // ========================================================================
+    // COMPONENTS
+    // ========================================================================
+
+    const StatusBadge = ({ status, size = 'md' }) => {
+      const sizeClasses = {
+        sm: 'text-xs px-2 py-1',
+        md: 'text-xs px-3 py-1',
+        lg: 'text-sm px-4 py-1'
+      };
+      
+      return (
+        <span 
+          className={`status-badge ${sizeClasses[size]}`}
+          style={{ 
+            backgroundColor: `${getStatusColor(status)}15`,
+            color: getStatusColor(status),
+            border: `1px solid ${getStatusColor(status)}40`
+          }}
+        >
+          {status.replace(/_/g, ' ')}
+        </span>
+      );
+    };
+
+    const MetricCard = ({ label, value, unit, trend }) => (
+      <div className="card">
+        <div style={{ color: '#71717a', fontSize: '10px', marginBottom: '8px' }}>
+          {label}
+        </div>
+        <div className="flex items-baseline gap-2">
+          <span style={{ fontSize: '24px', fontWeight: 'bold', color: '#fafafa' }}>{value}</span>
+          {unit && <span style={{ fontSize: '14px', color: '#a1a1aa' }}>{unit}</span>}
+        </div>
+        {trend && (
+          <div style={{ 
+            fontSize: '12px', 
+            marginTop: '4px',
+            color: trend === 'up' ? '#10b981' : trend === 'down' ? '#ef4444' : '#71717a'
+          }}>
+            {trend === 'up' ? '↗ +2.3%' : trend === 'down' ? '↘ -1.2%' : '→ 0.0%'}
+          </div>
+        )}
+      </div>
+    );
+
+    const HardwareStatusChip = ({ name, status, details }) => (
+      <div className="flex items-center gap-2" style={{ 
+        background: 'rgba(24, 24, 27, 0.3)', 
+        border: '1px solid rgba(63, 63, 70, 0.3)',
+        padding: '8px 12px',
+        borderRadius: '2px'
+      }}>
+        <div 
+          className={status ? 'animate-pulse' : ''}
+          style={{ 
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            backgroundColor: status ? '#10b981' : '#ef4444'
+          }}
+        />
+        <div className="flex-1">
+          <div style={{ fontSize: '12px', fontWeight: '600', color: '#e4e4e7' }}>{name}</div>
+          <div style={{ fontSize: '10px', color: '#71717a' }}>{details}</div>
+        </div>
+      </div>
+    );
+
+    // ========================================================================
+    // MAIN DASHBOARD
+    // ========================================================================
+
+    const TRNGDashboard = () => {
+      const [activePage, setActivePage] = useState('overview');
+      const [nextCaptureIn, setNextCaptureIn] = useState(10);
+      const [currentFrame, setCurrentFrame] = useState(8642);
+      const [hardware, setHardware] = useState(generateMockHardwareStatus());
+      const [pipeline, setPipeline] = useState(generateMockPipeline());
+      const [ledgerEntries] = useState(generateMockLedgerEntries(50));
+      const [selectedEntry, setSelectedEntry] = useState(null);
+      const [entropyScore, setEntropyScore] = useState(82.3);
+
+      // Simulate countdown timer
+      useEffect(() => {
+        const timer = setInterval(() => {
+          setNextCaptureIn(prev => {
+            if (prev <= 0) {
+              setCurrentFrame(f => f + 1);
+              setEntropyScore(65 + Math.random() * 30);
+              return 10;
+            }
+            return prev - 1;
+          });
+        }, 1000);
+        return () => clearInterval(timer);
+      }, []);
+
+      // Simulate real-time updates
+      useEffect(() => {
+        const updateInterval = setInterval(() => {
+          setHardware(generateMockHardwareStatus());
+          setPipeline(generateMockPipeline());
+        }, 3000);
+        return () => clearInterval(updateInterval);
+      }, []);
+
+      const navigation = [
+        { id: 'overview', label: 'Overview', icon: '◈' },
+        { id: 'entropy', label: 'Live Entropy', icon: '◉' },
+        { id: 'time', label: 'Time & Hardware', icon: '◷' },
+        { id: 'ledger', label: 'Ledger Explorer', icon: '≡' },
+        { id: 'blockchain', label: 'Blockchain', icon: '⬡' },
+        { id: 'verification', label: 'Verification', icon: '✓' },
+        { id: 'settings', label: 'Settings', icon: '⚙' }
+      ];
+
+      return (
+        <div className="min-h-screen" style={{ background: '#0a0a0a', color: '#fafafa' }}>
+          {/* Top Bar */}
+          <div className="sticky top-0 z-50" style={{
+            borderBottom: '1px solid #27272a',
+            background: 'rgba(24, 24, 27, 0.8)',
+            backdropFilter: 'blur(4px)'
+          }}>
+            <div className="flex items-center justify-between px-6 py-4">
+              <div className="flex items-center gap-6">
+                <h1 className="text-xl font-bold uppercase tracking-wider flex items-center gap-3">
+                  <span style={{ color: '#10b981' }}>⬢</span>
+                  TRNG Control System
+                </h1>
+                <div className="flex items-center gap-2" style={{ fontSize: '10px', color: '#71717a' }}>
+                  <span>v2.1.0</span>
+                  <span>•</span>
+                  <span>Uptime: 48h 23m</span>
+                </div>
+              </div>
+              <div className="flex items-center gap-4">
+                <div style={{
+                  width: '32px',
+                  height: '32px',
+                  background: 'linear-gradient(135deg, #2563eb, #7c3aed)',
+                  borderRadius: '2px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '12px',
+                  fontWeight: 'bold'
+                }}>
+                  OP
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex">
+            {/* Sidebar */}
+            <div style={{
+              width: '256px',
+              borderRight: '1px solid #27272a',
+              background: 'rgba(24, 24, 27, 0.5)',
+              minHeight: 'calc(100vh - 73px)',
+              padding: '16px'
+            }}>
+              <nav className="space-y-1">
+                {navigation.map((item) => (
+                  <button
+                    key={item.id}
+                    onClick={() => setActivePage(item.id)}
+                    className={`nav-button ${activePage === item.id ? 'active' : ''}`}
+                  >
+                    <span style={{ fontSize: '18px' }}>{item.icon}</span>
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </nav>
+            </div>
+
+            {/* Main Content */}
+            <div style={{ flex: 1, padding: '32px', paddingBottom: '80px' }}>
+              {activePage === 'overview' && (
+                <div className="space-y-6">
+                  {/* Global Status Header */}
+                  <div className="card">
+                    <div className="grid grid-cols-4 gap-6">
+                      <div>
+                        <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>SYSTEM STATUS</div>
+                        <StatusBadge status="healthy" size="lg" />
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>ENVIRONMENT</div>
+                        <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#3b82f6' }}>TESTNET</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>NETWORK</div>
+                        <div style={{ fontSize: '14px', fontWeight: 'bold' }}>Sepolia Testnet</div>
+                        <div style={{ fontSize: '10px', color: '#71717a' }}>Chain ID: 11155111</div>
+                      </div>
+                      <div>
+                        <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>OPERATOR</div>
+                        <div style={{ fontSize: '14px', fontWeight: 'bold' }}>0x742d...3f8c</div>
+                        <div style={{ fontSize: '10px', color: '#10b981' }}>Connected</div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Hardware Status */}
+                  <div className="grid grid-cols-4 gap-4">
+                    <HardwareStatusChip 
+                      name="CAMERA" 
+                      status={hardware.camera.connected} 
+                      details={hardware.camera.connected ? `${hardware.camera.resolution} @ ${hardware.camera.fps}fps` : 'Disconnected'}
+                    />
+                    <HardwareStatusChip 
+                      name="ESP32" 
+                      status={hardware.esp32.online} 
+                      details={hardware.esp32.online ? `Latency: ${hardware.esp32.latency.toFixed(1)}ms` : 'Offline'}
+                    />
+                    <HardwareStatusChip 
+                      name="DS3231" 
+                      status={hardware.ds3231.synced} 
+                      details={hardware.ds3231.synced ? `Drift: ${hardware.ds3231.drift.toFixed(0)}ms` : 'Not synced'}
+                    />
+                    <HardwareStatusChip 
+                      name="ATECC608A" 
+                      status={hardware.atecc608a.present} 
+                      details={hardware.atecc608a.present ? `FW: ${hardware.atecc608a.firmwareVersion}` : 'Not detected'}
+                    />
+                  </div>
+
+                  {/* Key Metrics */}
+                  <div className="grid grid-cols-4 gap-4">
+                    <MetricCard label="NEXT CAPTURE" value={nextCaptureIn} unit="sec" />
+                    <MetricCard label="ENTROPY RATE" value="6.2" unit="entries/min" trend="up" />
+                    <MetricCard label="ANCHOR LATENCY" value="2.3" unit="sec" trend="neutral" />
+                    <MetricCard label="PENDING QUEUE" value="12" unit="entries" />
+                  </div>
+
+                  {/* Pipeline */}
+                  <div className="card">
+                    <h2 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '24px', color: '#d4d4d8' }}>
+                      PIPELINE STATUS
+                    </h2>
+                    <div className="grid grid-cols-8 gap-3">
+                      {pipeline.map((step, idx) => (
+                        <div key={step.id} className="relative">
+                          <div 
+                            className="cursor-pointer transition-all"
+                            style={{
+                              border: `2px solid ${getStatusColor(step.status)}`,
+                              padding: '12px',
+                              borderRadius: '2px'
+                            }}
+                          >
+                            <div style={{ fontSize: '10px', color: '#a1a1aa', marginBottom: '8px' }}>
+                              {step.name}
+                            </div>
+                            <StatusBadge status={step.status} size="sm" />
+                            <div style={{ marginTop: '8px', fontSize: '9px', color: '#71717a' }}>
+                              <div>Latency: {step.latency}ms</div>
+                              <div>Rate: {step.successRate.toFixed(1)}%</div>
+                            </div>
+                          </div>
+                          {idx < pipeline.length - 1 && (
+                            <div style={{
+                              position: 'absolute',
+                              top: '50%',
+                              right: '-12px',
+                              width: '24px',
+                              height: '2px',
+                              background: '#3f3f46',
+                              transform: 'translateY(-50%)'
+                            }} />
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activePage === 'entropy' && (
+                <div className="space-y-6">
+                  <div className="grid grid-cols-3 gap-6">
+                    {/* Live Image Panel */}
+                    <div className="col-span-2 card">
+                      <div className="flex items-center justify-between mb-4">
+                        <h2 style={{ fontSize: '14px', fontWeight: 'bold' }}>LIVE CAPTURE</h2>
+                        <div className="flex gap-2">
+                          <button style={{
+                            fontSize: '10px',
+                            padding: '4px 12px',
+                            borderRadius: '2px',
+                            background: '#2563eb',
+                            color: 'white',
+                            border: 'none'
+                          }}>ORIGINAL</button>
+                          <button style={{
+                            fontSize: '10px',
+                            padding: '4px 12px',
+                            borderRadius: '2px',
+                            background: '#27272a',
+                            color: '#a1a1aa',
+                            border: 'none'
+                          }}>PROCESSED</button>
+                        </div>
+                      </div>
+                      
+                      <div className="aspect-video relative" style={{
+                        background: '#09090b',
+                        border: '1px solid #27272a',
+                        borderRadius: '2px',
+                        overflow: 'hidden'
+                      }}>
+                        <div style={{
+                          position: 'absolute',
+                          inset: 0,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center'
+                        }}>
+                          <div 
+                            className="lava-lamp"
+                            style={{
+                              width: '256px',
+                              height: '256px',
+                              borderRadius: '50%',
+                              background: 'radial-gradient(circle at 30% 40%, #ff6b6b, #ee5a6f 30%, #c44569 60%, #8b3a62 90%)'
+                            }}
+                          />
+                        </div>
+                        <div style={{
+                          position: 'absolute',
+                          top: '16px',
+                          left: '16px',
+                          background: 'rgba(0,0,0,0.7)',
+                          padding: '4px 12px',
+                          fontSize: '10px',
+                          color: '#d4d4d8'
+                        }}>
+                          Frame #{currentFrame} • ORIGINAL
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Entropy Quality */}
+                    <div>
+                      <div className="card">
+                        <h3 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '16px' }}>
+                          ENTROPY QUALITY
+                        </h3>
+                        <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                          <div style={{ fontSize: '48px', fontWeight: 'bold', color: '#10b981' }}>
+                            {entropyScore.toFixed(1)}
+                          </div>
+                          <div style={{ fontSize: '14px', color: '#71717a' }}>/ 100</div>
+                        </div>
+                        <div style={{
+                          padding: '8px',
+                          borderRadius: '2px',
+                          background: entropyScore < 60 ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+                          color: entropyScore < 60 ? '#f87171' : '#34d399',
+                          fontSize: '12px',
+                          textAlign: 'center'
+                        }}>
+                          {entropyScore < 60 ? '⚠ Low entropy detected' : '✓ Quality within normal range'}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Cryptographic Hashes */}
+                  <div className="card">
+                    <h2 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '16px' }}>
+                      CRYPTOGRAPHIC HASHES
+                    </h2>
+                    <div className="grid grid-cols-2 gap-4">
+                      {[
+                        { label: 'IMAGE HASH (SHA-256)', value: generateMockHash() },
+                        { label: 'RNG OUTPUT HASH', value: generateMockHash() },
+                        { label: 'METADATA HASH', value: generateMockHash() },
+                        { label: 'COMBINED HASH', value: generateMockHash() }
+                      ].map(({ label, value }) => (
+                        <div key={label} style={{
+                          background: '#09090b',
+                          border: '1px solid #27272a',
+                          padding: '16px',
+                          borderRadius: '2px'
+                        }}>
+                          <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>{label}</div>
+                          <code style={{ fontSize: '12px', color: '#10b981', wordBreak: 'break-all' }}>
+                            {formatHash(value, 16)}
+                          </code>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {activePage === 'ledger' && (
+                <div className="space-y-6">
+                  {/* Filters */}
+                  <div className="card flex items-center gap-4" style={{ padding: '16px' }}>
+                    <input 
+                      type="text"
+                      placeholder="Search by hash, frame ID..."
+                      style={{ flex: 1 }}
+                    />
+                    <select>
+                      <option>All Statuses</option>
+                      <option>Confirmed</option>
+                      <option>Pending</option>
+                    </select>
+                    <button style={{
+                      background: '#2563eb',
+                      color: 'white',
+                      padding: '8px 16px',
+                      fontSize: '14px',
+                      borderRadius: '2px',
+                      border: 'none'
+                    }}>
+                      EXPORT
+                    </button>
+                  </div>
+
+                  {/* Table */}
+                  <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+                    <div className="overflow-x-auto">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>FRAME ID</th>
+                            <th>TIMESTAMP</th>
+                            <th>COMBINED HASH</th>
+                            <th>SIGNATURE</th>
+                            <th>BLOCKCHAIN</th>
+                            <th>ENTROPY</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {ledgerEntries.slice(0, 15).map((entry) => (
+                            <tr 
+                              key={entry.id}
+                              onClick={() => setSelectedEntry(entry)}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <td style={{ color: '#d4d4d8' }}>#{entry.frameIndex}</td>
+                              <td style={{ fontSize: '12px', color: '#a1a1aa' }}>
+                                {formatTimestamp(entry.timestamp).slice(11)}
+                              </td>
+                              <td style={{ fontSize: '12px', color: '#10b981' }}>
+                                {formatHash(entry.combinedHash, 8)}
+                              </td>
+                              <td><StatusBadge status={entry.signatureStatus} size="sm" /></td>
+                              <td><StatusBadge status={entry.blockchainStatus} size="sm" /></td>
+                              <td style={{ fontSize: '12px', color: '#71717a' }}>
+                                {entry.entropyScore.toFixed(0)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  {/* Entry Detail */}
+                  {selectedEntry && (
+                    <div className="card">
+                      <div className="flex items-center justify-between mb-6">
+                        <h2 style={{ fontSize: '14px', fontWeight: 'bold' }}>
+                          ENTRY DETAILS: #{selectedEntry.frameIndex}
+                        </h2>
+                        <button 
+                          onClick={() => setSelectedEntry(null)}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#71717a',
+                            fontSize: '20px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <div className="grid grid-cols-2 gap-6">
+                        <div>
+                          <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>
+                            COMBINED HASH
+                          </div>
+                          <code style={{ fontSize: '12px', color: '#10b981', wordBreak: 'break-all' }}>
+                            {selectedEntry.combinedHash}
+                          </code>
+                        </div>
+                        <div>
+                          <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>
+                            BLOCKCHAIN TX
+                          </div>
+                          {selectedEntry.blockchainTxHash ? (
+                            <code style={{ fontSize: '12px', color: '#3b82f6', wordBreak: 'break-all' }}>
+                              {formatHash(selectedEntry.blockchainTxHash)}
+                            </code>
+                          ) : (
+                            <div style={{ fontSize: '12px', color: '#71717a' }}>Not yet anchored</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(activePage === 'time' || activePage === 'blockchain' || activePage === 'verification' || activePage === 'settings') && (
+                <div style={{ textAlign: 'center', paddingTop: '80px', color: '#71717a' }}>
+                  <div style={{ fontSize: '14px', marginBottom: '8px' }}>
+                    {activePage.charAt(0).toUpperCase() + activePage.slice(1)} Page
+                  </div>
+                  <div style={{ fontSize: '12px' }}>(Component placeholder)</div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="fixed bottom-0 left-0 right-0 z-40" style={{
+            borderTop: '1px solid #27272a',
+            background: 'rgba(24, 24, 27, 0.8)',
+            backdropFilter: 'blur(4px)'
+          }}>
+            <div className="flex items-center justify-between px-6 py-2" style={{ fontSize: '10px', color: '#71717a' }}>
+              <div className="flex items-center gap-6">
+                <span>System Load: <span style={{ color: '#10b981' }}>23%</span></span>
+                <span>Memory: <span style={{ color: '#10b981' }}>2.1GB / 8GB</span></span>
+                <span>Network: <span style={{ color: '#10b981' }}>↓ 124 KB/s ↑ 45 KB/s</span></span>
+              </div>
+              <div className="flex items-center gap-4">
+                <span>Connected to: <span style={{ color: '#3b82f6' }}>ws://localhost:8080</span></span>
+                <div className="flex items-center gap-1">
+                  <div className="animate-pulse" style={{
+                    width: '6px',
+                    height: '6px',
+                    borderRadius: '50%',
+                    background: '#10b981'
+                  }} />
+                  <span>LIVE</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // Render the app
+    ReactDOM.render(<TRNGDashboard />, document.getElementById('root'));
+  </script>
+</body>
+</html>
