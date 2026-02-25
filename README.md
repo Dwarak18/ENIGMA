@@ -1,4 +1,5 @@
 # ENIGMA
+<<<<<<< HEAD
 
 > Real-time entropy generation, cryptographic signing, and verification system.
 >
@@ -202,3 +203,6 @@ mitigations, and pre-production checklist.
 | Frontend | React 18 · Vite · Tailwind CSS · Socket.IO      |
 | Infra    | Docker · Nginx · Let's Encrypt · Prometheus     |
 | Crypto   | secp256r1 · ECDSA · SHA-256                     |
+=======
+ENIGMA is a "Physical Oracle" that solves the problem of predictable randomness in digital systems
+>>>>>>> d6715a534fa7111223a47fc18d508feb2e08499d
