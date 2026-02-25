@@ -23,6 +23,7 @@ const config         = require('./config');
 const logger         = require('./logger');
 const metrics        = require('./metrics');
 const entropyRouter  = require('./routes/entropy');
+const systemRouter   = require('./routes/system');
 const { createWebSocketServer } = require('./websocket/index');
 const entropyService = require('./services/entropyService');
 
@@ -70,6 +71,7 @@ if (config.metrics.enabled) {
 
 /* ── API routes ───────────────────────────────────────────────────────── */
 app.use('/api/v1/entropy', entropyRouter);
+app.use('/api/v1/system',  systemRouter);
 
 /* 404 fallback */
 app.use((_req, res) => res.status(404).json({ ok: false, code: 'NOT_FOUND' }));

@@ -51,7 +51,7 @@ router.get('/latest', async (_req, res) => {
     if (!record) return res.status(404).json({ ok: false, code: 'NOT_FOUND' });
     return res.json({ ok: true, data: record });
   } catch (err) {
-    logger.error('GET /entropy/latest error', { error: err.message });
+    logger.error('GET /entropy/latest error', { error: err.message || String(err) });
     return res.status(500).json({ ok: false, code: 'INTERNAL_ERROR' });
   }
 });
@@ -64,7 +64,7 @@ router.get('/history', historyQueryRules, async (req, res) => {
     const records = await service.getHistory(limit);
     return res.json({ ok: true, count: records.length, data: records });
   } catch (err) {
-    logger.error('GET /entropy/history error', { error: err.message });
+    logger.error('GET /entropy/history error', { error: err.message || String(err) });
     return res.status(500).json({ ok: false, code: 'INTERNAL_ERROR' });
   }
 });

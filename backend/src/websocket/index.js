@@ -1,13 +1,70 @@
 /**
  * src/websocket/index.js
- * Socket.IO server setup and connection lifecycle logging.
+ * Socket.IO server setup, connection lifecycle, and periodic system broadcasts.
  */
 'use strict';
 
 const { Server } = require('socket.io');
+const os         = require('os');
+const pool       = require('../db/pool');
 const config     = require('../config');
 const logger     = require('../logger');
 const metrics    = require('../metrics');
+
+const SERVICE_START = Date.now();
+
+/**
+ * Build and emit a compact system-stats snapshot to all connected clients.
+ * Called every 5 s by an interval started in createWebSocketServer.
+ */
+async function broadcastSystemStats(io) {
+  try {
+    const [countRes, deviceRes] = await Promise.all([
+      pool.query(`
+        SELECT
+          COUNT(*)::int                                       AS total,
+          COUNT(*) FILTER (WHERE signature IS NOT NULL)::int AS verified
+        FROM entropy_records
+      `),
+      pool.query(`
+        SELECT d.device_id, d.last_seen, COUNT(e.id)::int AS record_count
+        FROM devices d
+        LEFT JOIN entropy_records e ON e.device_id = d.device_id
+        GROUP BY d.device_id, d.last_seen
+        ORDER BY d.last_seen DESC
+      `),
+    ]);
+
+    const now = Date.now();
+    const devices = deviceRes.rows.map(d => ({
+      device_id:    d.device_id,
+      last_seen:    d.last_seen,
+      record_count: d.record_count,
+      online:       (now - new Date(d.last_seen).getTime()) < 30_000,
+    }));
+
+    io.emit('system:stats', {
+      totalRecords:    countRes.rows[0].total,
+      verifiedRecords: countRes.rows[0].verified,
+      activeDevices:   devices.filter(d => d.online).length,
+      devices,
+      uptime:          Math.floor((now - SERVICE_START) / 1000),
+      system: {
+        platform:    os.platform(),
+        nodeVersion: process.version,
+        cpuCount:    os.cpus().length,
+        load:        parseFloat(os.loadavg()[0].toFixed(2)),
+        memory: {
+          usedMB:  Math.round(process.memoryUsage().heapUsed / 1024 / 1024),
+          totalMB: Math.round(os.totalmem() / 1024 / 1024),
+        },
+      },
+      timestamp: new Date().toISOString(),
+    });
+  } catch (err) {
+    logger.error('broadcastSystemStats error', { error: err.message || String(err) });
+  }
+}
 
 /**
  * Attach Socket.IO to an existing HTTP server.
@@ -23,6 +80,11 @@ function createWebSocketServer(httpServer) {
     transports: config.ws.transports,
   });
 
+  /* ── Periodic system-stats broadcast ─────────────────────────────── */
+  const statsInterval = setInterval(() => broadcastSystemStats(io), 5000);
+  /* Clean up on server close */
+  httpServer.on('close', () => clearInterval(statsInterval));
+
   io.on('connection', (socket) => {
     const clientIp = socket.handshake.headers['x-forwarded-for']
                   || socket.handshake.address;
@@ -33,6 +95,9 @@ function createWebSocketServer(httpServer) {
     });
     metrics.wsConnections.inc();
 
+    /* Send a fresh stats snapshot immediately on connect */
+    broadcastSystemStats(io);
+
     socket.on('disconnect', (reason) => {
       logger.info('WebSocket client disconnected', {
         socketId: socket.id,
@@ -41,14 +106,32 @@ function createWebSocketServer(httpServer) {
       metrics.wsConnections.dec();
     });
 
-    /* Optional: client can request last N records on connect */
+    /* Client requests last N entropy records */
     socket.on('entropy:fetch_history', async ({ limit = 20 } = {}) => {
       try {
         const { getHistory } = require('../services/entropyService');
         const records = await getHistory(Math.min(limit, 100));
         socket.emit('entropy:history', records);
       } catch (err) {
-        logger.error('entropy:fetch_history error', { error: err.message });
+        logger.error('entropy:fetch_history error', { error: err.message || String(err) });
+      }
+    });
+
+    /* Client requests a single record by id or entropy_hash */
+    socket.on('entropy:lookup', async ({ entropy_hash } = {}) => {
+      try {
+        if (!entropy_hash) { socket.emit('entropy:lookup_result', { ok: false }); return; }
+        const res = await pool.query(`
+          SELECT id, device_id, timestamp, entropy_hash, signature, created_at
+          FROM entropy_records WHERE entropy_hash = $1
+        `, [entropy_hash]);
+        socket.emit('entropy:lookup_result', {
+          ok:     res.rows.length > 0,
+          record: res.rows[0] || null,
+        });
+      } catch (err) {
+        logger.error('entropy:lookup error', { error: err.message || String(err) });
+        socket.emit('entropy:lookup_result', { ok: false });
       }
     });
   });

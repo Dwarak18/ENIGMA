@@ -6,13 +6,11 @@ version: "3.9"
 #  Services:
 #    db        – PostgreSQL 15
 #    backend   – Node.js API + WebSocket
-#    frontend  – React SPA (built, served by Nginx)
-#    nginx     – Reverse proxy / TLS termination
+#    nginx     – Serves trng-dashboard.html + reverse-proxies API & WS
 #
 #  Usage:
-#    cp backend/.env.example backend/.env   # fill in values
 #    docker compose up -d --build
-#    docker compose exec backend node src/db/migrate.js
+#    open http://localhost
 # ══════════════════════════════════════════════════════════════════════════════
 
 services:
@@ -46,9 +44,10 @@ services:
     restart: unless-stopped
     env_file: ./backend/.env
     environment:
-      NODE_ENV:     production
-      DATABASE_URL: postgresql://enigma:${POSTGRES_PASSWORD:-changeme}@db:5432/enigma_db
-      PORT:         3000
+      NODE_ENV:        production
+      DATABASE_URL:    postgresql://enigma:${POSTGRES_PASSWORD:-changeme}@db:5432/enigma_db
+      PORT:            3000
+      CORS_ORIGINS:    http://localhost,http://localhost:80
     depends_on:
       db:
         condition: service_healthy
@@ -63,36 +62,20 @@ services:
     expose:
       - "3000"
 
-  # ── Frontend ────────────────────────────────────────────────────────────
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: enigma_frontend
-    restart: unless-stopped
-    depends_on:
-      - backend
-    networks:
-      - enigma_net
-    expose:
-      - "80"
-
-  # ── Nginx reverse proxy ─────────────────────────────────────────────────
+  # ── Nginx – serves dashboard + proxies API/WS ──────────────────────────────
   nginx:
     image: nginx:1.25-alpine
     container_name: enigma_nginx
     restart: unless-stopped
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/conf.d:/etc/nginx/conf.d:ro
-      # TLS certificates (Let's Encrypt / self-signed for dev)
-      - ./nginx/certs:/etc/nginx/certs:ro
+      # Serve the single-file dashboard
+      - ./trng-dashboard.html:/usr/share/nginx/html/index.html:ro
     depends_on:
       - backend
-      - frontend
     networks:
       - enigma_net
 
