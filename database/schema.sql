@@ -29,21 +29,25 @@ COMMENT ON COLUMN devices.last_seen   IS 'Timestamp of most recent payload from 
 -- Stores validated, signed entropy submissions.
 -- =============================================================================
 CREATE TABLE IF NOT EXISTS entropy_records (
-    id            UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
-    device_id     TEXT         NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
-    timestamp     BIGINT       NOT NULL,   -- UNIX epoch seconds (from device clock)
-    entropy_hash  TEXT         NOT NULL,   -- 64-char hex SHA-256 digest
-    signature     TEXT         NOT NULL,   -- 128-char hex raw ECDSA r||s
-    created_at    TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id       TEXT         NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
+    timestamp       BIGINT       NOT NULL,   -- UNIX epoch seconds (from device clock)
+    entropy_hash    TEXT         NOT NULL,   -- 64-char hex  SHA-256(aes_key || ist_datetime)
+    signature       TEXT         NOT NULL,   -- 128-char hex raw ECDSA r||s
+    aes_ciphertext  TEXT,                    -- 32-char hex  AES-256-CBC ciphertext (16-byte block)
+    aes_iv          TEXT,                    -- 32-char hex  AES IV (16 bytes)
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
-COMMENT ON TABLE  entropy_records              IS 'Validated entropy submissions from edge devices';
-COMMENT ON COLUMN entropy_records.id           IS 'Server-generated UUID for this record';
-COMMENT ON COLUMN entropy_records.device_id    IS 'FK to devices table';
-COMMENT ON COLUMN entropy_records.timestamp    IS 'UNIX epoch seconds reported by the device';
-COMMENT ON COLUMN entropy_records.entropy_hash IS 'SHA-256(entropy_bytes || timestamp_le8) in hex';
-COMMENT ON COLUMN entropy_records.signature    IS 'Raw ECDSA secp256r1 signature r||s in hex';
-COMMENT ON COLUMN entropy_records.created_at   IS 'Server-side insertion timestamp';
+COMMENT ON TABLE  entropy_records                  IS 'Validated entropy submissions from edge devices';
+COMMENT ON COLUMN entropy_records.id               IS 'Server-generated UUID for this record';
+COMMENT ON COLUMN entropy_records.device_id        IS 'FK to devices table';
+COMMENT ON COLUMN entropy_records.timestamp        IS 'UNIX epoch seconds reported by the device';
+COMMENT ON COLUMN entropy_records.entropy_hash     IS 'SHA-256(AES_key || IST_datetime_str) in hex';
+COMMENT ON COLUMN entropy_records.signature        IS 'Raw ECDSA secp256r1 signature r||s in hex';
+COMMENT ON COLUMN entropy_records.aes_ciphertext   IS 'AES-256-CBC encrypted entropy (32-char hex)';
+COMMENT ON COLUMN entropy_records.aes_iv           IS 'AES CBC IV used for this record (32-char hex)';
+COMMENT ON COLUMN entropy_records.created_at       IS 'Server-side insertion timestamp';
 
 -- =============================================================================
 -- Indexes
@@ -78,6 +82,8 @@ CREATE OR REPLACE VIEW entropy_feed AS
         er.timestamp,
         er.entropy_hash,
         er.signature,
+        er.aes_ciphertext,
+        er.aes_iv,
         er.created_at,
         d.public_key
     FROM entropy_records er
@@ -85,3 +91,11 @@ CREATE OR REPLACE VIEW entropy_feed AS
     ORDER BY er.created_at DESC;
 
 COMMENT ON VIEW entropy_feed IS 'Enriched entropy records joined with device public key';
+
+-- =============================================================================
+-- Migration: add AES columns to existing databases (idempotent)
+-- Safe to re-run; ADD COLUMN IF NOT EXISTS is a no-op when column exists.
+-- =============================================================================
+ALTER TABLE entropy_records
+    ADD COLUMN IF NOT EXISTS aes_ciphertext TEXT,
+    ADD COLUMN IF NOT EXISTS aes_iv         TEXT;

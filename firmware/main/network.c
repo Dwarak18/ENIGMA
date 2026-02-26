@@ -12,7 +12,6 @@
 #include "esp_sntp.h"
 #include "esp_http_client.h"
 #include "esp_log.h"
-#include "esp_tls.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/event_groups.h"
 #include "cJSON.h"
@@ -99,10 +98,11 @@ esp_err_t network_wifi_connect(void)
 
 esp_err_t network_sntp_sync(void)
 {
-    ESP_LOGI(TAG, "Synchronising time via SNTP...");
+    ESP_LOGI(TAG, "Synchronising time via SNTP (IST = UTC+5:30)...");
     esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
-    esp_sntp_setservername(0, SNTP_SERVER_0);
-    esp_sntp_setservername(1, SNTP_SERVER_1);
+    esp_sntp_setservername(0, SNTP_SERVER_0);   /* in.pool.ntp.org  */
+    esp_sntp_setservername(1, SNTP_SERVER_1);   /* time.google.com  */
+    esp_sntp_setservername(2, SNTP_SERVER_2);   /* pool.ntp.org     */
     esp_sntp_init();
 
     uint32_t elapsed = 0;
@@ -115,9 +115,20 @@ esp_err_t network_sntp_sync(void)
         }
     }
 
-    time_t now = 0;
-    time(&now);
-    ESP_LOGI(TAG, "Time synced: %lld", (long long)now);
+    /* UTC epoch */
+    time_t utc_now = 0;
+    time(&utc_now);
+
+    /* Convert to IST (UTC + 5 h 30 min) for display */
+    time_t ist_now = utc_now + IST_OFFSET_SECS;
+    struct tm ist_tm;
+    gmtime_r(&ist_now, &ist_tm);
+
+    ESP_LOGI(TAG, "SNTP synced  UTC epoch : %lld", (long long)utc_now);
+    ESP_LOGI(TAG, "SNTP synced  IST (GMT+5:30) : %04d-%02d-%02d %02d:%02d:%02d",
+             ist_tm.tm_year + 1900, ist_tm.tm_mon + 1, ist_tm.tm_mday,
+             ist_tm.tm_hour, ist_tm.tm_min, ist_tm.tm_sec);
+
     return ESP_OK;
 }
 
@@ -134,7 +145,10 @@ static esp_err_t http_event_handler(esp_http_client_event_t *evt)
 esp_err_t network_post_entropy(uint64_t    timestamp,
                                const char *hash_hex,
                                const char *sig_hex,
-                               const char *pubkey_hex)
+                               const char *pubkey_hex,
+                               const char *rtc_time,
+                               const char *aes_cipher_hex,
+                               const char *aes_iv_hex)
 {
     /* Build JSON body */
     cJSON *root = cJSON_CreateObject();
@@ -144,6 +158,15 @@ esp_err_t network_post_entropy(uint64_t    timestamp,
     cJSON_AddStringToObject(root, "signature",    sig_hex);
     if (pubkey_hex) {
         cJSON_AddStringToObject(root, "public_key", pubkey_hex);
+    }
+    if (rtc_time) {
+        cJSON_AddStringToObject(root, "rtc_time", rtc_time);
+    }
+    if (aes_cipher_hex) {
+        cJSON_AddStringToObject(root, "aes_ciphertext", aes_cipher_hex);
+    }
+    if (aes_iv_hex) {
+        cJSON_AddStringToObject(root, "aes_iv", aes_iv_hex);
     }
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
@@ -159,8 +182,7 @@ esp_err_t network_post_entropy(uint64_t    timestamp,
         .method          = HTTP_METHOD_POST,
         .timeout_ms      = HTTP_TIMEOUT_MS,
         .event_handler   = http_event_handler,
-        .transport_type  = HTTP_TRANSPORT_OVER_SSL,
-        .use_global_ca_store = true,   /* uses the bundled Mozilla CA store */
+        .transport_type  = HTTP_TRANSPORT_OVER_TCP,  /* plain HTTP for local Docker */
     };
 
     esp_http_client_handle_t client = esp_http_client_init(&cfg);

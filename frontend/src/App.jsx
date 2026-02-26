@@ -9,6 +9,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { io } from 'socket.io-client';
 
 import LiveClock          from './components/LiveClock.jsx';
+import DevicePairingBadge from './components/DevicePairingBadge.jsx';
 import OverviewPage       from './pages/OverviewPage.jsx';
 import EntropyPage        from './pages/EntropyPage.jsx';
 import LedgerPage         from './pages/LedgerPage.jsx';
@@ -77,11 +78,12 @@ export default function App() {
     }
     const d  = devs[0];
     const on = d.online;
+    const paired = d.has_key || false;
     return {
       camera:    { connected: on, resolution: '1920x1080', fps: 30, lastCapture: on ? d.last_seen : null },
-      esp32:     { online: on, lastHeartbeat: d.last_seen, latency: 12, deviceId: d.device_id, records: d.record_count },
+      esp32:     { online: on, paired, lastHeartbeat: d.last_seen, latency: 12, deviceId: d.device_id, records: d.record_count },
       ds3231:    { synced: on, drift: on ? 0.3 : 0, lastSync: d.last_seen },
-      atecc608a: { present: on, lastSigning: latestRecord?.created_at, firmwareVersion: 'v2.1.3' },
+      atecc608a: { present: paired, lastSigning: latestRecord?.created_at, firmwareVersion: 'v2.1.3' },
     };
   }, [systemStatus, latestRecord]);
 
@@ -237,6 +239,17 @@ export default function App() {
               </button>
             ))}
           </nav>
+
+          {/* ── Device Pairing Status ──────────────────────────── */}
+          <div style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid #27272a' }}>
+            <div style={{
+              fontSize: '9px', color: '#52525b', marginBottom: '8px',
+              letterSpacing: '0.12em', fontWeight: '600',
+            }}>
+              HARDWARE DEVICES
+            </div>
+            <DevicePairingBadge devices={systemStatus?.devices ?? []} />
+          </div>
         </div>
 
         {/* ── Main Content ───────────────────────────────────────── */}

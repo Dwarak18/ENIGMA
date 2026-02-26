@@ -4,13 +4,15 @@
  *
  * System flow (every ENTROPY_INTERVAL_MS):
  *   1. Collect entropy bytes (hardware TRNG)
- *   2. Compute SHA-256(entropy || timestamp)
- *   3. Sign hash with device private key → raw 64-byte ECDSA sig
- *   4. POST JSON payload to backend via HTTPS
- *   5. Sleep and repeat
+ *   2. Read DS3231 RTC time (HH:MM:SS) for payload enrichment
+ *   3. Compute SHA-256(entropy || timestamp)
+ *   4. Sign hash with device private key → raw 64-byte ECDSA sig
+ *   5. POST JSON payload to backend via HTTP
+ *   6. Sleep and repeat
  *
  * The first iteration also includes the public key in the payload
  * so the backend can cache it for future verification.
+ * The DS3231 RTC time is included in every payload as `rtc_time`.
  */
 
 #include "config.h"
@@ -18,6 +20,7 @@
 #include "crypto.h"
 #include "storage.h"
 #include "network.h"
+#include "rtc.h"
 
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -52,13 +55,20 @@ static void entropy_task(void *pvParam)
     char sig_hex [CRYPTO_SIG_LEN  * 2 + 1];
     char pub_hex [CRYPTO_PUBKEY_LEN * 2 + 1];
 
+    /* DS3231 RTC time string "HH:MM:SS" */
+    char rtc_time_str[20];
+
     for (;;) {
         int64_t cycle_start = esp_timer_get_time();
 
         /* ── 1. Collect entropy ────────────────────────────────────── */
         entropy_collect(entropy_raw, ENTROPY_BYTES);
 
-        /* ── 2. Timestamp ──────────────────────────────────────────── */
+        /* ── 2. DS3231 RTC time (for payload enrichment) ──────────── */
+        rtc_get_time(rtc_time_str);
+        ESP_LOGI(TAG, "DS3231 time: %s", rtc_time_str);
+
+        /* ── 3. SNTP Timestamp ─────────────────────────────────────── */
         time_t now = 0;
         time(&now);
         uint64_t timestamp = (uint64_t)now;
@@ -92,10 +102,12 @@ static void entropy_task(void *pvParam)
             }
         }
 
-        ESP_LOGI(TAG, "hash=%.*s... ts=%" PRIu64, 16, hash_hex, timestamp);
+        ESP_LOGI(TAG, "hash=%.*s... ts=%" PRIu64 " rtc=%s", 16, hash_hex, timestamp, rtc_time_str);
 
-        /* ── 6. POST to backend ────────────────────────────────────── */
-        esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex, pubkey_arg);
+        /* ── 7. POST to backend ────────────────────────────────────── */
+        esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex,
+                                             pubkey_arg, rtc_time_str,
+                                             NULL, NULL);  /* no AES fields in legacy path */
         if (err == ESP_OK) {
             pubkey_sent = true;
         } else {
@@ -127,10 +139,22 @@ void app_main(void)
     ESP_ERROR_CHECK(network_wifi_connect());
     ESP_ERROR_CHECK(network_sntp_sync());
 
-    /* ── 3. Crypto ──────────────────────────────────────────────────── */
+    /* ── 3. DS3231 External RTC ─────────────────────────────────────── */
+    external_rtc_init();
+
+    /* Push the SNTP-synced UTC time into the DS3231 as IST (UTC+5:30).
+     * After this call the chip keeps ticking in IST independently.      */
+    {
+        time_t utc_now = 0;
+        time(&utc_now);
+        ESP_LOGI(TAG, "Writing SNTP time (UTC %lld) to DS3231 as IST...", (long long)utc_now);
+        rtc_set_time_from_epoch(utc_now);
+    }
+
+    /* ── 4. Crypto ──────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(crypto_init());
 
-    /* ── 4. Start entropy loop ──────────────────────────────────────── */
+    /* ── 5. Start entropy loop ──────────────────────────────────────── */
     xTaskCreate(entropy_task, "entropy_task",
                 MAIN_TASK_STACK, NULL, 5, NULL);
 

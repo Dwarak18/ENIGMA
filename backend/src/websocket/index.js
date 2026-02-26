@@ -27,10 +27,10 @@ async function broadcastSystemStats(io) {
         FROM entropy_records
       `),
       pool.query(`
-        SELECT d.device_id, d.last_seen, COUNT(e.id)::int AS record_count
+        SELECT d.device_id, d.last_seen, d.public_key, COUNT(e.id)::int AS record_count
         FROM devices d
         LEFT JOIN entropy_records e ON e.device_id = d.device_id
-        GROUP BY d.device_id, d.last_seen
+        GROUP BY d.device_id, d.last_seen, d.public_key
         ORDER BY d.last_seen DESC
       `),
     ]);
@@ -40,6 +40,7 @@ async function broadcastSystemStats(io) {
       device_id:    d.device_id,
       last_seen:    d.last_seen,
       record_count: d.record_count,
+      has_key:      Boolean(d.public_key),
       online:       (now - new Date(d.last_seen).getTime()) < 30_000,
     }));
 

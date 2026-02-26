@@ -48,6 +48,24 @@ const entropySubmitRules = [
     .isLength({ min: 130, max: 130 })
     .withMessage('public_key must be a 130-character hex string (uncompressed P-256)'),
 
+  body('rtc_time')
+    .optional()
+    .isString()
+    .matches(/^\d{2}:\d{2}:\d{2}$/)
+    .withMessage('rtc_time must be in HH:MM:SS format'),
+
+  body('aes_ciphertext')
+    .optional()
+    .isHexadecimal()
+    .isLength({ min: 32, max: 32 })
+    .withMessage('aes_ciphertext must be a 32-character hex string (AES-256-CBC, 16-byte block)'),
+
+  body('aes_iv')
+    .optional()
+    .isHexadecimal()
+    .isLength({ min: 32, max: 32 })
+    .withMessage('aes_iv must be a 32-character hex string (16-byte AES IV)'),
+
   handleValidationErrors,
 ];
 

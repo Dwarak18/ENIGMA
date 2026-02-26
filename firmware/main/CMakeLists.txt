@@ -1,10 +1,11 @@
 idf_component_register(
     SRCS
-        "main.c"
+        "Enigma_pro.c"
         "entropy.c"
         "crypto.c"
         "network.c"
         "storage.c"
+        "rtc.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash
@@ -12,7 +13,7 @@ idf_component_register(
         esp_http_client
         mbedtls
         esp_timer
-        esp_random
+        esp_hw_support
         json
-        app_update
+        driver
 )

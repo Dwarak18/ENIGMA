@@ -52,6 +52,32 @@ export default function EntropyCard({ record, isLatest = false }) {
         </p>
       </div>
 
+      {/* AES fields (shown when present) */}
+      {record.aes_ciphertext && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          <div className="space-y-1">
+            <p className="text-[10px] text-white/40 uppercase tracking-widest">AES Cipher</p>
+            <p className="font-mono text-[11px] text-amber-300/80 break-all leading-relaxed">
+              {record.aes_ciphertext}
+            </p>
+          </div>
+          <div className="space-y-1">
+            <p className="text-[10px] text-white/40 uppercase tracking-widest">AES IV</p>
+            <p className="font-mono text-[11px] text-purple-300/80 break-all leading-relaxed">
+              {record.aes_iv}
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* RTC time (shown when present) */}
+      {record.rtc_time && (
+        <div className="mt-2 space-y-1">
+          <p className="text-[10px] text-white/40 uppercase tracking-widest">RTC (IST)</p>
+          <p className="font-mono text-[11px] text-cyan-300/70">{record.rtc_time}</p>
+        </div>
+      )}
+
       {/* Hash visualizer */}
       <HashBar hash={record.entropy_hash} />
     </div>

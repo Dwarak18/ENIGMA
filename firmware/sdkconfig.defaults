@@ -1,7 +1,7 @@
 # ENIGMA Firmware SDK Config Defaults
 
-# Enable NVS encryption (requires flash encryption to be enabled)
-CONFIG_NVS_ENCRYPTION=y
+# NVS encryption disabled (requires eFuse HMAC key – not needed for local dev)
+# CONFIG_NVS_ENCRYPTION=y
 
 # Flash encryption (enable for production)
 # CONFIG_FLASH_ENCRYPTION_ENABLED=y
@@ -26,8 +26,8 @@ CONFIG_LWIP_SNTP_MAX_SERVERS=3
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
-# HTTP client timeout
-CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=y
+# HTTP client (plain HTTP for local dev – no TLS needed)
+CONFIG_ESP_HTTP_CLIENT_ENABLE_HTTPS=n
 
 # Task watchdog
 CONFIG_ESP_TASK_WDT=y

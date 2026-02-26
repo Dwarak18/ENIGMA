@@ -27,6 +27,7 @@ export default function HistoryTable({ records }) {
             <th className="px-4 py-3 text-white/50 font-medium text-xs uppercase tracking-wider">Time</th>
             <th className="px-4 py-3 text-white/50 font-medium text-xs uppercase tracking-wider">Device</th>
             <th className="px-4 py-3 text-white/50 font-medium text-xs uppercase tracking-wider">Hash (truncated)</th>
+            <th className="px-4 py-3 text-white/50 font-medium text-xs uppercase tracking-wider">AES Cipher</th>
             <th className="px-4 py-3 text-white/50 font-medium text-xs uppercase tracking-wider">Signature</th>
             <th className="px-4 py-3 text-white/50 font-medium text-xs uppercase tracking-wider">Status</th>
           </tr>
@@ -45,6 +46,9 @@ export default function HistoryTable({ records }) {
               </td>
               <td className="px-4 py-3 font-mono text-xs text-emerald-300">
                 {truncateMid(r.entropy_hash, 14)}
+              </td>
+              <td className="px-4 py-3 font-mono text-xs text-amber-300/80">
+                {r.aes_ciphertext ? truncateMid(r.aes_ciphertext, 8) : '—'}
               </td>
               <td className="px-4 py-3 font-mono text-xs text-white/40">
                 {truncateMid(r.signature, 10)}

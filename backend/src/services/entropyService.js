@@ -77,6 +77,9 @@ async function processEntropy(payload) {
     entropy_hash,
     signature,
     public_key,
+    rtc_time,
+    aes_ciphertext,
+    aes_iv,
   } = payload;
 
   /* ── Timestamp freshness check ──────────────────────────────────── */
@@ -116,10 +119,11 @@ async function processEntropy(payload) {
   let record;
   try {
     const res = await pool.query(`
-      INSERT INTO entropy_records (device_id, timestamp, entropy_hash, signature)
-      VALUES ($1, $2, $3, $4)
-      RETURNING id, device_id, timestamp, entropy_hash, signature, created_at
-    `, [device_id, timestamp, entropy_hash, signature]);
+      INSERT INTO entropy_records (device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv)
+      VALUES ($1, $2, $3, $4, $5, $6)
+      RETURNING id, device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, created_at
+    `, [device_id, timestamp, entropy_hash, signature,
+        aes_ciphertext || null, aes_iv || null]);
     record = res.rows[0];
   } catch (dbErr) {
     if (dbErr.code === '23505') {   /* unique_violation */
@@ -141,13 +145,16 @@ async function processEntropy(payload) {
   /* ── Broadcast via WebSocket ────────────────────────────────────── */
   if (_io) {
     _io.emit('entropy:new', {
-      id:           record.id,
-      device_id:    record.device_id,
-      timestamp:    Number(record.timestamp),
-      entropy_hash: record.entropy_hash,
-      signature:    record.signature,
-      created_at:   record.created_at,
-      verified:     true,
+      id:              record.id,
+      device_id:       record.device_id,
+      timestamp:       Number(record.timestamp),
+      entropy_hash:    record.entropy_hash,
+      signature:       record.signature,
+      aes_ciphertext:  record.aes_ciphertext || null,
+      aes_iv:          record.aes_iv         || null,
+      created_at:      record.created_at,
+      verified:        true,
+      rtc_time:        rtc_time || null,
     });
   }
 
