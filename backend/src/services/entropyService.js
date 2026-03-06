@@ -18,6 +18,95 @@ const deviceKeyCache = new Map();
 /** @type {import('socket.io').Server|null} */
 let _io = null;
 
+/* ── Device presence watchdog ─────────────────────────────────────────
+ * Tracks live online/offline state per device.
+ * On each entropy POST the watchdog timer is reset.
+ * After DEVICE_WATCHDOG_MS with no new post the device is considered
+ * offline and a `device:status` event is broadcast to all WS clients.
+ */
+const DEVICE_WATCHDOG_MS = 35_000;   // 3.5× the 10s posting interval
+const _deviceTimers = new Map();     // device_id → NodeJS.Timeout
+const _deviceOnline = new Map();     // device_id → boolean
+
+function _emitDeviceStatus(device_id, online, last_seen) {
+  if (_io) {
+    _io.emit('device:status', {
+      device_id,
+      online,
+      last_seen: last_seen || null,
+      ts: Date.now(),
+    });
+  }
+}
+
+function _trackDeviceHeartbeat(device_id, last_seen) {
+  _deviceOnline.set(device_id, true);
+
+  // Reset the watchdog
+  if (_deviceTimers.has(device_id)) clearTimeout(_deviceTimers.get(device_id));
+
+  const timer = setTimeout(() => {
+    _deviceOnline.set(device_id, false);
+    _deviceTimers.delete(device_id);
+    logger.info('Device went offline (watchdog timeout)', { device_id });
+    _emitDeviceStatus(device_id, false, null);
+  }, DEVICE_WATCHDOG_MS);
+
+  _deviceTimers.set(device_id, timer);
+
+  // Always emit heartbeat so frontend refreshes last_seen
+  _emitDeviceStatus(device_id, true, last_seen);
+}
+
+/**
+ * Snapshot of current device online states.
+ * Used by WebSocket on-connect to sync new clients.
+ */
+function getDeviceStatuses() {
+  return Array.from(_deviceOnline.entries()).map(([device_id, online]) => ({
+    device_id,
+    online,
+  }));
+}
+
+/**
+ * Immediately force a device online or offline.
+ * Called by the COM port monitor (external signal) via POST /api/v1/system/device-status.
+ * Resets / clears the watchdog timer accordingly.
+ *
+ * @param {string} device_id
+ * @param {boolean} online
+ * @param {string|null} [com_port] optional COM port label for logging
+ */
+function forceDeviceStatus(device_id, online, com_port) {
+  // Clear any existing watchdog
+  if (_deviceTimers.has(device_id)) {
+    clearTimeout(_deviceTimers.get(device_id));
+    _deviceTimers.delete(device_id);
+  }
+
+  _deviceOnline.set(device_id, online);
+
+  logger.info(
+    online ? 'COM monitor: device connected' : 'COM monitor: device disconnected',
+    { device_id, com_port: com_port || 'unknown' }
+  );
+
+  // Emit immediately
+  _emitDeviceStatus(device_id, online, null);
+
+  // If forced online, arm the watchdog so it auto-expires if firmware never posts
+  if (online) {
+    const timer = setTimeout(() => {
+      _deviceOnline.set(device_id, false);
+      _deviceTimers.delete(device_id);
+      logger.info('Device watchdog expired after COM-online signal', { device_id });
+      _emitDeviceStatus(device_id, false, null);
+    }, DEVICE_WATCHDOG_MS);
+    _deviceTimers.set(device_id, timer);
+  }
+}
+
 /**
  * Inject Socket.IO server reference (called once from src/index.js).
  * @param {import('socket.io').Server} io
@@ -159,6 +248,10 @@ async function processEntropy(payload) {
   }
 
   logger.info('Entropy record stored and broadcast', { id: record.id, device_id });
+
+  // ── Device presence heartbeat ──────────────────────────────────────
+  _trackDeviceHeartbeat(device_id, record.created_at);
+
   return record;
 }
 
@@ -188,4 +281,4 @@ async function getHistory(limit = 100) {
   return res.rows;
 }
 
-module.exports = { processEntropy, getLatest, getHistory, setIO };
+module.exports = { processEntropy, getLatest, getHistory, setIO, getDeviceStatuses, forceDeviceStatus };

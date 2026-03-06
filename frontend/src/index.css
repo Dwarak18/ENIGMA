@@ -35,6 +35,12 @@ body {
   to   { transform: translateX(0);    opacity: 1; }
 }
 
+/* Toast slide-in from the right (used by device connect/disconnect toasts) */
+@keyframes fadeSlideIn {
+  from { transform: translateX(32px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
 @keyframes lavaFlow {
   0%,100% { transform: scale(1)   rotate(0deg);  }
   25%     { transform: scale(1.2) rotate(5deg);  }

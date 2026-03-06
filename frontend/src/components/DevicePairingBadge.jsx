@@ -6,8 +6,21 @@
  *   PAIRED + ONLINE   → green pulsing dot  + "⬡ CONNECTED"
  *   PAIRED + OFFLINE  → yellow dot         + "PAIRED / OFFLINE"
  *   UNPAIRED (no key) → red dot            + "NOT PAIRED"
+ *
+ * Props:
+ *   devices      – array from systemStatus.devices (DB snapshot)
+ *   deviceStates – realtime overrides from device:status WS events
  */
-export default function DevicePairingBadge({ devices = [] }) {
+import { useState, useEffect } from 'react';
+
+export default function DevicePairingBadge({ devices = [], deviceStates = {} }) {
+  // Tick every second so "Xs ago" stays live
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick(n => n + 1), 1000);
+    return () => clearInterval(t);
+  }, []);
+
   if (devices.length === 0) {
     return (
       <div
@@ -28,8 +41,11 @@ export default function DevicePairingBadge({ devices = [] }) {
   return (
     <div className="space-y-2">
       {devices.map((device) => {
-        const isPaired  = device.has_key;
-        const isOnline  = device.online;
+        // Realtime override wins over DB snapshot
+        const rt       = deviceStates[device.device_id];
+        const isPaired = device.has_key;
+        const isOnline = rt ? rt.online : device.online;
+        const lastSeen = (rt?.last_seen) || device.last_seen;
 
         /* colour / label logic */
         let dotColor  = '#ef4444';   /* red   – not paired */
@@ -50,9 +66,9 @@ export default function DevicePairingBadge({ devices = [] }) {
           labelColor = '#f59e0b';
         }
 
-        /* format last_seen as relative time */
-        const lastSeenText = device.last_seen
-          ? relativeTime(new Date(device.last_seen))
+        /* format last_seen as live relative time */
+        const lastSeenText = lastSeen
+          ? relativeTime(new Date(lastSeen))
           : 'never';
 
         return (
@@ -66,7 +82,7 @@ export default function DevicePairingBadge({ devices = [] }) {
               borderRadius: '2px',
               background: 'rgba(24,24,27,0.5)',
               border: `1px solid ${isOnline ? 'rgba(16,185,129,0.25)' : 'rgba(63,63,70,0.3)'}`,
-              transition: 'border-color 0.3s',
+              transition: 'border-color 0.5s',
             }}
           >
             {/* Status dot */}
@@ -79,6 +95,7 @@ export default function DevicePairingBadge({ devices = [] }) {
                 background: dotColor,
                 boxShadow: dotGlow,
                 flexShrink: 0,
+                transition: 'background 0.4s, box-shadow 0.4s',
               }}
             />
 
@@ -97,7 +114,7 @@ export default function DevicePairingBadge({ devices = [] }) {
               >
                 {device.device_id}
               </div>
-              <div style={{ fontSize: '9px', color: labelColor, marginTop: '1px' }}>
+              <div style={{ fontSize: '9px', color: labelColor, marginTop: '1px', transition: 'color 0.4s' }}>
                 {label}
               </div>
               <div style={{ fontSize: '9px', color: '#52525b', marginTop: '1px' }}>

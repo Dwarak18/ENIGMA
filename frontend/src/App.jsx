@@ -60,6 +60,10 @@ export default function App() {
   const [records,      setRecords]      = useState([]);
   const [systemStatus, setSystemStatus] = useState(null);
   const [latestRecord, setLatestRecord] = useState(null);
+  // Per-device realtime online states (overrides DB-computed `online`)
+  const [deviceStates, setDeviceStates] = useState({});  // { [device_id]: { online, last_seen } }
+  // Toast queue: [{ id, device_id, online, ts }]
+  const [toasts, setToasts] = useState([]);
 
   // ── Derived state ─────────────────────────────────────────────────
   const entropyScore  = useMemo(() => computeEntropyScore(latestRecord?.entropy_hash), [latestRecord]);
@@ -125,6 +129,39 @@ export default function App() {
     socket.on('connect',       () => setWsStatus('connected'));
     socket.on('disconnect',    () => setWsStatus('disconnected'));
     socket.on('connect_error', () => setWsStatus('error'));
+
+    /* Realtime device connect / disconnect */
+    socket.on('device:status', ({ device_id, online, last_seen }) => {
+      setDeviceStates(prev => {
+        const wasOnline = prev[device_id]?.online;
+        const changed   = wasOnline !== online;
+        if (changed) {
+          const id = `${device_id}-${Date.now()}`;
+          setToasts(q => [
+            { id, device_id, online, ts: Date.now() },
+            ...q.slice(0, 4),
+          ]);
+          // Auto-dismiss after 5 s
+          setTimeout(() => setToasts(q => q.filter(t => t.id !== id)), 5000);
+        }
+        return { ...prev, [device_id]: { online, last_seen } };
+      });
+      /* Reflect into systemStatus.devices so all pages stay in sync */
+      setSystemStatus(prev => {
+        if (!prev?.devices) return prev;
+        return {
+          ...prev,
+          devices: prev.devices.map(d =>
+            d.device_id === device_id
+              ? { ...d, online, last_seen: last_seen || d.last_seen }
+              : d
+          ),
+          activeDevices: prev.devices
+            .map(d => d.device_id === device_id ? { ...d, online } : d)
+            .filter(d => d.online).length,
+        };
+      });
+    });
 
     socket.on('entropy:new', (rec) => {
       setRecords((prev) => [rec, ...prev].slice(0, 100));
@@ -248,7 +285,7 @@ export default function App() {
             }}>
               HARDWARE DEVICES
             </div>
-            <DevicePairingBadge devices={systemStatus?.devices ?? []} />
+            <DevicePairingBadge devices={systemStatus?.devices ?? []} deviceStates={deviceStates} />
           </div>
         </div>
 
@@ -311,7 +348,45 @@ export default function App() {
         </div>
       </div>
 
-      {/* ── Footer ───────────────────────────────────────────────── */}
+      {/* ── Device Connect / Disconnect Toasts ──────────────── */}
+      <div style={{
+        position: 'fixed', bottom: '52px', right: '16px',
+        zIndex: 9999, display: 'flex', flexDirection: 'column-reverse', gap: '8px',
+        pointerEvents: 'none',
+      }}>
+        {toasts.map(toast => (
+          <div
+            key={toast.id}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '10px',
+              padding: '10px 14px',
+              borderRadius: '4px',
+              background: toast.online ? 'rgba(16,185,129,0.15)' : 'rgba(239,68,68,0.15)',
+              border: `1px solid ${toast.online ? 'rgba(16,185,129,0.5)' : 'rgba(239,68,68,0.5)'}`,
+              backdropFilter: 'blur(6px)',
+              boxShadow: `0 0 12px ${toast.online ? 'rgba(16,185,129,0.2)' : 'rgba(239,68,68,0.2)'}`,
+              animation: 'fadeSlideIn 0.25s ease',
+              minWidth: '260px',
+            }}
+          >
+            <div style={{
+              width: '8px', height: '8px', borderRadius: '50%', flexShrink: 0,
+              background: toast.online ? '#10b981' : '#ef4444',
+              boxShadow: toast.online ? '0 0 6px #10b981' : '0 0 6px #ef4444',
+            }} />
+            <div>
+              <div style={{ fontSize: '11px', fontWeight: '700', color: '#e4e4e7', fontFamily: 'monospace' }}>
+                {toast.device_id}
+              </div>
+              <div style={{ fontSize: '10px', color: toast.online ? '#10b981' : '#ef4444' }}>
+                {toast.online ? '⬡ DEVICE CONNECTED' : '○ DEVICE DISCONNECTED'}
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* ── Footer ───────────────────────────────────────────── */}
       <div
         className="fixed bottom-0 left-0 right-0 z-40"
         style={{ borderTop: '1px solid #27272a', background: 'rgba(24,24,27,0.8)', backdropFilter: 'blur(4px)' }}

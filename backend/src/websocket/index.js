@@ -10,6 +10,7 @@ const pool       = require('../db/pool');
 const config     = require('../config');
 const logger     = require('../logger');
 const metrics    = require('../metrics');
+const { getDeviceStatuses } = require('../services/entropyService');
 
 const SERVICE_START = Date.now();
 
@@ -36,13 +37,25 @@ async function broadcastSystemStats(io) {
     ]);
 
     const now = Date.now();
-    const devices = deviceRes.rows.map(d => ({
-      device_id:    d.device_id,
-      last_seen:    d.last_seen,
-      record_count: d.record_count,
-      has_key:      Boolean(d.public_key),
-      online:       (now - new Date(d.last_seen).getTime()) < 30_000,
-    }));
+
+    /* Watchdog map: source of truth for live device state */
+    const watchdogMap = new Map(
+      getDeviceStatuses().map(({ device_id, online }) => [device_id, online])
+    );
+
+    const devices = deviceRes.rows.map(d => {
+      const lastSeenMs = d.last_seen ? new Date(d.last_seen).getTime() : 0;
+      const online = watchdogMap.has(d.device_id)
+        ? watchdogMap.get(d.device_id)
+        : (now - lastSeenMs) < 35_000;
+      return {
+        device_id:    d.device_id,
+        last_seen:    d.last_seen,
+        record_count: d.record_count,
+        has_key:      Boolean(d.public_key),
+        online,
+      };
+    });
 
     io.emit('system:stats', {
       totalRecords:    countRes.rows[0].total,
@@ -98,6 +111,12 @@ function createWebSocketServer(httpServer) {
 
     /* Send a fresh stats snapshot immediately on connect */
     broadcastSystemStats(io);
+
+    /* Push current device online/offline states to the new client */
+    const { getDeviceStatuses } = require('../services/entropyService');
+    for (const { device_id, online } of getDeviceStatuses()) {
+      socket.emit('device:status', { device_id, online, last_seen: null, ts: Date.now() });
+    }
 
     socket.on('disconnect', (reason) => {
       logger.info('WebSocket client disconnected', {

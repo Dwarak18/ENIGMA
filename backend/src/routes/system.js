@@ -12,6 +12,7 @@ const os      = require('os');
 const router  = express.Router();
 const pool    = require('../db/pool');
 const logger  = require('../logger');
+const { getDeviceStatuses, forceDeviceStatus } = require('../services/entropyService');
 
 /* Track service start time */
 const SERVICE_START = Date.now();
@@ -59,16 +60,24 @@ router.get('/status', async (_req, res) => {
     const uptimeSec  = Math.floor((now - SERVICE_START) / 1000);
     const memUsage   = process.memoryUsage();
 
+    /* Watchdog map: device_id → { online } (source of truth for live state) */
+    const watchdogMap = new Map(
+      getDeviceStatuses().map(({ device_id, online }) => [device_id, online])
+    );
+
     const devices = deviceRes.rows.map(d => {
       const lastSeenMs = d.last_seen ? new Date(d.last_seen).getTime() : 0;
+      /* Prefer watchdog state; fall back to DB last_seen for devices not yet
+         tracked (e.g. first call after backend restart). */
+      const online = watchdogMap.has(d.device_id)
+        ? watchdogMap.get(d.device_id)
+        : (now - lastSeenMs) < 35_000;
       return {
         device_id:    d.device_id,
         last_seen:    d.last_seen,
         first_seen:   d.first_seen,
         record_count: d.record_count,
-        /* online = last submission within 30 s */
-        online: (now - lastSeenMs) < 30_000,
-        /* public_key length as a proxy for key presence */
+        online,
         has_key: Boolean(d.public_key),
       };
     });
@@ -100,6 +109,28 @@ router.get('/status', async (_req, res) => {
     logger.error('GET /system/status error', { error: err.message || String(err) });
     return res.status(500).json({ ok: false, code: 'INTERNAL_ERROR', message: err.message });
   }
+});
+
+/* ── POST /api/v1/system/device-status ───────────────────────────────────
+ * Called by the Windows COM port monitor (tools/com_monitor.py) whenever
+ * an ESP32 device is physically plugged or unplugged.
+ * Body: { device_id, online: true|false, com_port: "COM5" }
+ * ──────────────────────────────────────────────────────────────────────── */
+router.post('/device-status', (req, res) => {
+  const { device_id, online, com_port } = req.body;
+
+  if (!device_id || typeof online !== 'boolean') {
+    return res.status(400).json({
+      ok: false,
+      code: 'VALIDATION_ERROR',
+      message: 'device_id (string) and online (boolean) are required',
+    });
+  }
+
+  forceDeviceStatus(device_id, online, com_port || null);
+
+  logger.info('Device status forced via COM monitor', { device_id, online, com_port });
+  return res.json({ ok: true, device_id, online });
 });
 
 /* ── GET /api/v1/system/uptime ────────────────────────────────────────── */

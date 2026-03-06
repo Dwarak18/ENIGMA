@@ -54,8 +54,8 @@ Connect ATECC608A to the ESP32-S3 via I2C:
 
 | ATECC608A Pin | ESP32-S3 Pin |
 |---------------|--------------|
-| SDA           | GPIO 8       |
-| SCL           | GPIO 9       |
+| SDA           | GPIO 17      |
+| SCL           | GPIO 18      |
 | VCC           | 3.3V         |
 | GND           | GND          |
 
