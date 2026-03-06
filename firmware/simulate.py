@@ -29,6 +29,8 @@ Environment variables (all have defaults):
 """
 
 import os
+import signal
+import sys
 import time
 import hashlib
 import secrets
@@ -60,7 +62,8 @@ AES_KEY_FILE      = '/tmp/enigma_sim_aes_key.bin'
 # IST = UTC + 5 h 30 min
 IST_OFFSET_SECS   = 5 * 3600 + 30 * 60
 
-ENTROPY_ENDPOINT  = f"{BACKEND_URL}/api/v1/entropy"
+ENTROPY_ENDPOINT       = f"{BACKEND_URL}/api/v1/entropy"
+DEVICE_STATUS_ENDPOINT = f"{BACKEND_URL}/api/v1/system/device-status"
 
 # ── Retry on startup ────────────────────────────────────────────────────────
 STARTUP_RETRY_S   = 5
@@ -186,6 +189,25 @@ def wait_for_backend() -> None:
     raise RuntimeError(f"Backend did not become ready within {STARTUP_TIMEOUT_S}s")
 
 
+def send_device_status(online: bool, rtc_time: str | None = None) -> None:
+    """
+    POST /api/v1/system/device-status so the backend immediately broadcasts
+    the correct online/offline state to all WebSocket clients.
+    """
+    payload: dict = {
+        'device_id': DEVICE_ID,
+        'online':    online,
+        'com_port':  'DOCKER-SIM',
+    }
+    if rtc_time:
+        payload['rtc_time'] = rtc_time
+    try:
+        r = requests.post(DEVICE_STATUS_ENDPOINT, json=payload, timeout=HTTP_TIMEOUT_S)
+        log.info("device-status → online=%s  HTTP %d", online, r.status_code)
+    except requests.exceptions.RequestException as exc:
+        log.warning("Could not send device-status signal: %s", exc)
+
+
 # ══════════════════════════════════════════════════════════════════════════
 #  Main entropy loop  –  Enigma Pro pipeline
 # ══════════════════════════════════════════════════════════════════════════
@@ -209,85 +231,112 @@ def main() -> None:
     log.info("ECDSA public key (first 20 chars): %s…", pubkey_hex[:20])
     log.info("AES-256 key     (first 8 chars) : %s…", aes_key.hex()[:8])
 
-    while True:
-        cycle_start = time.monotonic()
+    # ── Signal online as soon as the backend is ready ────────────────────
+    send_device_status(online=True)
 
-        try:
-            # ── 1. Unix timestamp ────────────────────────────────────────
-            timestamp = int(time.time())
+    # ── Graceful shutdown: mark offline on SIGTERM / SIGINT ──────────────
+    def _shutdown(signum, frame):   # noqa: ARG001
+        log.info("Shutdown signal received – marking device offline …")
+        send_device_status(online=False)
+        sys.exit(0)
 
-            # ── 2. IST datetime string  "YYYY-MM-DD HH:MM:SS" ────────────
-            ist_datetime = ist_datetime_str(timestamp)
-            rtc_time     = ist_datetime[11:]          # "HH:MM:SS" portion
+    signal.signal(signal.SIGTERM, _shutdown)
+    signal.signal(signal.SIGINT,  _shutdown)
 
-            # ── 3. 16-byte random plaintext + fresh IV ────────────────────
-            plain = secrets.token_bytes(16)
-            iv    = secrets.token_bytes(16)
+    was_connected = True   # track connection loss so we can re-announce on restore
 
-            # ── 4. AES-256-CBC encrypt ────────────────────────────────────
-            cipher_bytes = aes_cbc_encrypt(aes_key, iv, plain)
+    try:
+        while True:
+            cycle_start = time.monotonic()
 
-            # ── 5. SHA-256(AES_key ‖ IST_datetime_str)  →  entropy_hash ──
-            hash_bytes = compute_hash_pro(aes_key, ist_datetime)
-            hash_hex   = hash_bytes.hex()
+            try:
+                # ── 1. Unix timestamp ────────────────────────────────────────
+                timestamp = int(time.time())
 
-            # ── 6. ECDSA sign (ECDSA/SHA-256 to match Node verifier) ──────
-            sig_raw = ecdsa_sign_raw(ecdsa_key, hash_bytes)
-            sig_hex = sig_raw.hex()
+                # ── 2. IST datetime string  "YYYY-MM-DD HH:MM:SS" ────────────
+                ist_datetime = ist_datetime_str(timestamp)
+                rtc_time     = ist_datetime[11:]          # "HH:MM:SS" portion
 
-            # ── 7. Build payload ──────────────────────────────────────────
-            payload: dict = {
-                'device_id':      DEVICE_ID,
-                'timestamp':      timestamp,
-                'entropy_hash':   hash_hex,
-                'signature':      sig_hex,
-                'rtc_time':       rtc_time,
-                'aes_ciphertext': cipher_bytes.hex(),
-                'aes_iv':         iv.hex(),
-            }
-            if not pubkey_sent:
-                payload['public_key'] = pubkey_hex
+                # ── 3. 16-byte random plaintext + fresh IV ────────────────────
+                plain = secrets.token_bytes(16)
+                iv    = secrets.token_bytes(16)
 
-            # ── 8. Serial-monitor style pretty-print ──────────────────────
-            log.info("╔══ ENIGMA Entropy Emission ══╗")
-            log.info("  IST DateTime : %s", ist_datetime)
-            log.info("  RTC (IST)    : %s", rtc_time)
-            log.info("  UNIX Epoch   : %d", timestamp)
-            log.info("  AES IV       : %s", iv.hex())
-            log.info("  AES Cipher   : %s", cipher_bytes.hex())
-            log.info("  SHA-256 Hash : %s…", hash_hex[:32])
-            log.info("  ECDSA Sig    : %s…", sig_hex[:32])
+                # ── 4. AES-256-CBC encrypt ────────────────────────────────────
+                cipher_bytes = aes_cbc_encrypt(aes_key, iv, plain)
 
-            # ── 9. POST to backend ────────────────────────────────────────
-            resp = requests.post(
-                ENTROPY_ENDPOINT, json=payload, timeout=HTTP_TIMEOUT_S,
-            )
+                # ── 5. SHA-256(AES_key ‖ IST_datetime_str)  →  entropy_hash ──
+                hash_bytes = compute_hash_pro(aes_key, ist_datetime)
+                hash_hex   = hash_bytes.hex()
 
-            if resp.status_code == 201:
-                record_id = resp.json().get('data', {}).get('id', '?')
-                log.info(
-                    "✓  id=%-4s  hash=%.16s…  rtc=%s  [Accepted – blockchain anchor queued]",
-                    record_id, hash_hex, rtc_time,
+                # ── 6. ECDSA sign (ECDSA/SHA-256 to match Node verifier) ──────
+                sig_raw = ecdsa_sign_raw(ecdsa_key, hash_bytes)
+                sig_hex = sig_raw.hex()
+
+                # ── 7. Build payload ──────────────────────────────────────────
+                payload: dict = {
+                    'device_id':      DEVICE_ID,
+                    'timestamp':      timestamp,
+                    'entropy_hash':   hash_hex,
+                    'signature':      sig_hex,
+                    'rtc_time':       rtc_time,
+                    'aes_ciphertext': cipher_bytes.hex(),
+                    'aes_iv':         iv.hex(),
+                }
+                if not pubkey_sent:
+                    payload['public_key'] = pubkey_hex
+
+                # ── 8. Serial-monitor style pretty-print ──────────────────────
+                log.info("╔══ ENIGMA Entropy Emission ══╗")
+                log.info("  IST DateTime : %s", ist_datetime)
+                log.info("  RTC (IST)    : %s", rtc_time)
+                log.info("  UNIX Epoch   : %d", timestamp)
+                log.info("  AES IV       : %s", iv.hex())
+                log.info("  AES Cipher   : %s", cipher_bytes.hex())
+                log.info("  SHA-256 Hash : %s…", hash_hex[:32])
+                log.info("  ECDSA Sig    : %s…", sig_hex[:32])
+
+                # ── 9. POST to backend ────────────────────────────────────────
+                # If we just recovered from a connection error, re-announce
+                # online BEFORE posting so the TRNG pipeline is active first.
+                if not was_connected:
+                    log.info("Reconnected — re-announcing online status …")
+                    send_device_status(online=True, rtc_time=rtc_time)
+                    was_connected = True
+
+                resp = requests.post(
+                    ENTROPY_ENDPOINT, json=payload, timeout=HTTP_TIMEOUT_S,
                 )
-                pubkey_sent = True
 
-            elif resp.status_code == 409:
-                log.warning("⚠  Replay detected (HTTP 409), skipping record")
+                if resp.status_code == 201:
+                    record_id = resp.json().get('data', {}).get('id', '?')
+                    log.info(
+                        "✓  id=%-4s  hash=%.16s…  rtc=%s  [Accepted – blockchain anchor queued]",
+                        record_id, hash_hex, rtc_time,
+                    )
+                    pubkey_sent = True
 
-            else:
-                log.warning("✗  HTTP %d: %s", resp.status_code, resp.text[:300])
+                elif resp.status_code == 409:
+                    log.warning("⚠  Replay detected (HTTP 409), skipping record")
 
-        except requests.exceptions.ConnectionError:
-            log.warning("Connection refused – backend unreachable, will retry")
-            pubkey_sent = False   # re-send pubkey after reconnect
+                else:
+                    log.warning("✗  HTTP %d: %s", resp.status_code, resp.text[:300])
 
-        except Exception as exc:  # noqa: BLE001
-            log.error("Cycle error: %s", exc, exc_info=True)
+            except requests.exceptions.ConnectionError:
+                log.warning("Connection refused – backend unreachable, will retry")
+                pubkey_sent = False   # re-send pubkey after reconnect
+                was_connected = False
 
-        # ── Sleep for remainder of interval ──────────────────────────────
-        elapsed_ms = (time.monotonic() - cycle_start) * 1000.0
-        sleep_s    = max(0.0, (INTERVAL_MS - elapsed_ms) / 1000.0)
-        time.sleep(sleep_s)
+            except Exception as exc:  # noqa: BLE001
+                log.error("Cycle error: %s", exc, exc_info=True)
+
+            # ── Sleep for remainder of interval ──────────────────────────────
+            elapsed_ms = (time.monotonic() - cycle_start) * 1000.0
+            sleep_s    = max(0.0, (INTERVAL_MS - elapsed_ms) / 1000.0)
+            time.sleep(sleep_s)
+
+    finally:
+        # Ensure the backend always receives an offline signal on exit
+        send_device_status(online=False)
 
 
 if __name__ == '__main__':

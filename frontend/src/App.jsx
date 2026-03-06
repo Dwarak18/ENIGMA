@@ -64,6 +64,8 @@ export default function App() {
   const [deviceStates, setDeviceStates] = useState({});  // { [device_id]: { online, last_seen } }
   // Latest RTC time string received from firmware ("HH:MM:SS" from DS3231)
   const [firmwareRtcTime, setFirmwareRtcTime] = useState(null);
+  // TRNG pipeline state  { state: 'inactive'|'active'|'suspended', pipeline: [] }
+  const [trngStatus, setTrngStatus] = useState({ state: 'inactive', pipeline: [] });
   // Toast queue: [{ id, device_id, online, rtc_time, ts }]
   const [toasts, setToasts] = useState([]);
 
@@ -200,6 +202,26 @@ export default function App() {
 
     socket.on('system:stats', (data) => {
       setSystemStatus((prev) => ({ ...(prev || {}), ...data }));
+      if (data.trng) setTrngStatus(data.trng);
+    });
+
+    /* TRNG pipeline state changes (per-device or full snapshot) */
+    socket.on('trng:state', (data) => {
+      if (data.pipeline) {
+        setTrngStatus({ state: data.state, pipeline: data.pipeline });
+      } else {
+        setTrngStatus(prev => {
+          const pipeline = prev.pipeline
+            .map(d => d.device_id === data.device_id ? { ...d, state: data.state } : d);
+          if (!pipeline.some(d => d.device_id === data.device_id)) {
+            pipeline.push({ device_id: data.device_id, state: data.state });
+          }
+          const overall = pipeline.some(d => d.state === 'active') ? 'active'
+            : pipeline.some(d => d.state === 'suspended') ? 'suspended'
+            : 'inactive';
+          return { state: overall, pipeline };
+        });
+      }
     });
 
     socket.on('entropy:lookup_result', (res) => {
@@ -326,6 +348,7 @@ export default function App() {
               nextCaptureIn={nextCaptureIn}
               ledgerEntries={ledgerEntries}
               pipeline={pipeline}
+              trngStatus={trngStatus}
             />
           )}
 

@@ -28,7 +28,50 @@ const DEVICE_WATCHDOG_MS = 35_000;   // 3.5× the 10s posting interval
 const _deviceTimers = new Map();     // device_id → NodeJS.Timeout
 const _deviceOnline = new Map();     // device_id → boolean
 
+/* ── TRNG pipeline state machine ──────────────────────────────────────────
+ * inactive  – no device has come online since backend start
+ * active    – a verified device is online and emitting entropy
+ * suspended – device was active but disconnected; pipeline frozen
+ * ───────────────────────────────────────────────────────────────────────── */
+const TRNG_STATE = Object.freeze({
+  INACTIVE:  'inactive',
+  ACTIVE:    'active',
+  SUSPENDED: 'suspended',
+});
+
+const _trngByDevice = new Map();   // device_id → TRNG_STATE value
+
+function _setTRNG(device_id, newState) {
+  const prev = _trngByDevice.get(device_id) || TRNG_STATE.INACTIVE;
+  if (prev === newState) return;
+  _trngByDevice.set(device_id, newState);
+  logger.info('TRNG state change', { device_id, from: prev, to: newState });
+  if (_io) {
+    _io.emit('trng:state', { device_id, state: newState, ts: Date.now() });
+  }
+}
+
+function getTRNGStatus() {
+  const pipeline = Array.from(_trngByDevice.entries())
+    .map(([device_id, state]) => ({ device_id, state }));
+  const overall = pipeline.some(d => d.state === TRNG_STATE.ACTIVE)
+    ? TRNG_STATE.ACTIVE
+    : pipeline.some(d => d.state === TRNG_STATE.SUSPENDED)
+      ? TRNG_STATE.SUSPENDED
+      : TRNG_STATE.INACTIVE;
+  return { state: overall, pipeline, ts: Date.now() };
+}
+
 function _emitDeviceStatus(device_id, online, last_seen, rtc_time) {
+  // Mirror device online state into the TRNG pipeline state machine
+  if (online) {
+    _setTRNG(device_id, TRNG_STATE.ACTIVE);
+  } else {
+    const prev = _trngByDevice.get(device_id) || TRNG_STATE.INACTIVE;
+    // Only advance inactive→suspended when there was previously an active state
+    _setTRNG(device_id, prev === TRNG_STATE.ACTIVE ? TRNG_STATE.SUSPENDED : prev);
+  }
+
   if (_io) {
     _io.emit('device:status', {
       device_id,
@@ -285,4 +328,4 @@ async function getHistory(limit = 100) {
   return res.rows;
 }
 
-module.exports = { processEntropy, getLatest, getHistory, setIO, getDeviceStatuses, forceDeviceStatus };
+module.exports = { processEntropy, getLatest, getHistory, setIO, getDeviceStatuses, forceDeviceStatus, getTRNGStatus };

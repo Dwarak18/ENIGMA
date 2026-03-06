@@ -66,12 +66,9 @@ router.get('/status', async (_req, res) => {
     );
 
     const devices = deviceRes.rows.map(d => {
-      const lastSeenMs = d.last_seen ? new Date(d.last_seen).getTime() : 0;
-      /* Prefer watchdog state; fall back to DB last_seen for devices not yet
-         tracked (e.g. first call after backend restart). */
-      const online = watchdogMap.has(d.device_id)
-        ? watchdogMap.get(d.device_id)
-        : (now - lastSeenMs) < 35_000;
+      // Only trust the in-memory watchdog; no DB-time fallback so a fresh
+      // backend restart always shows devices as offline until they heartbeat.
+      const online = watchdogMap.get(d.device_id) === true;
       return {
         device_id:    d.device_id,
         last_seen:    d.last_seen,
@@ -144,5 +141,12 @@ router.get('/uptime', (_req, res) => {
     data: { uptimeSeconds: sec, formatted: `${h}h ${m}m ${s}s` },
   });
 });
-
+/* ── GET /api/v1/system/trng-status ──────────────────────────────────────
+ * Returns the current TRNG pipeline state.
+ * { ok, data: { state: 'inactive'|'active'|'suspended', pipeline: [...] } }
+ * ─────────────────────────────────────────────────────────────────────────── */
+router.get('/trng-status', (_req, res) => {
+  const { getTRNGStatus } = require('../services/entropyService');
+  return res.json({ ok: true, data: getTRNGStatus() });
+});
 module.exports = router;

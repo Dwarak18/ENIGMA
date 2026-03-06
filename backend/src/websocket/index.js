@@ -44,10 +44,10 @@ async function broadcastSystemStats(io) {
     );
 
     const devices = deviceRes.rows.map(d => {
-      const lastSeenMs = d.last_seen ? new Date(d.last_seen).getTime() : 0;
-      const online = watchdogMap.has(d.device_id)
-        ? watchdogMap.get(d.device_id)
-        : (now - lastSeenMs) < 35_000;
+      // Only trust the in-memory watchdog; if we have no record the device is
+      // offline (avoids stale DB last_seen falsely showing it connected after
+      // a backend restart).
+      const online = watchdogMap.get(d.device_id) === true;
       return {
         device_id:    d.device_id,
         last_seen:    d.last_seen,
@@ -63,6 +63,7 @@ async function broadcastSystemStats(io) {
       activeDevices:   devices.filter(d => d.online).length,
       devices,
       uptime:          Math.floor((now - SERVICE_START) / 1000),
+      trng:            getTRNGStatus(),
       system: {
         platform:    os.platform(),
         nodeVersion: process.version,
@@ -112,11 +113,11 @@ function createWebSocketServer(httpServer) {
     /* Send a fresh stats snapshot immediately on connect */
     broadcastSystemStats(io);
 
-    /* Push current device online/offline states to the new client */
-    const { getDeviceStatuses } = require('../services/entropyService');
+    /* Push current device online/offline states + TRNG state to new client */
     for (const { device_id, online } of getDeviceStatuses()) {
       socket.emit('device:status', { device_id, online, last_seen: null, ts: Date.now() });
     }
+    socket.emit('trng:state', { ...getTRNGStatus(), ts: Date.now() });
 
     socket.on('disconnect', (reason) => {
       logger.info('WebSocket client disconnected', {

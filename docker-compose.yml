@@ -1,0 +1,134 @@
+# ══════════════════════════════════════════════════════════════════════════
+# ENIGMA – Docker Compose stack
+#
+# Services:
+#   postgres   PostgreSQL 15 (persistent volume)
+#   backend    Node.js 20 Express + Socket.IO API
+#   frontend   React/Vite built → served by Nginx (also reverse-proxies API)
+#
+# Usage:
+#   docker compose up -d --build               # first run (builds images)
+#   docker compose up -d                       # subsequent starts
+#   docker compose down                        # stop & remove containers
+#   docker compose down -v                     # + remove DB volume
+# ══════════════════════════════════════════════════════════════════════════
+
+services:
+
+  # ── PostgreSQL 15 ─────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       enigma_db
+      POSTGRES_USER:     enigma
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U enigma -d enigma_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - enigma_net
+
+  # ── Backend (Node.js / Express / Socket.IO) ───────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: ./backend/.env
+    environment:
+      # Override DB host to reach the postgres service by name
+      DATABASE_URL: postgresql://enigma:changeme@postgres:5432/enigma_db
+      NODE_ENV:     production
+      PORT:         "3000"
+      # Allow requests from the Nginx frontend container (same origin via proxy)
+      CORS_ORIGINS: http://localhost,http://localhost:80
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - enigma_net
+
+  # ── Frontend (React → Nginx reverse proxy) ────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - enigma_net
+
+  # ── Device Listener (USB/serial ESP32-S3 + ATECC608A detector) ───────────
+  # Watches the host /dev tree via udev for ESP32 USB-serial devices.
+  # On detection it performs a serial handshake + ATECC608A challenge-response
+  # to verify the device, then POSTs device-status to the backend.
+  #
+  # Windows / Docker Desktop: bind the ESP32 USB device to WSL2 first:
+  #   usbipd list
+  #   usbipd bind   --busid <id>
+  #   usbipd attach --wsl --busid <id>
+  #
+  # Set SKIP_HANDSHAKE=true for development without real hardware.
+  device-listener:
+    build:
+      context: ./tools/device_listener
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    privileged: true          # required for udev netlink socket on Linux
+    volumes:
+      - /dev:/dev             # expose host USB/serial device nodes
+      - /run/udev:/run/udev:ro  # udev event socket (Linux; skipped on Windows)
+    environment:
+      BACKEND_URL:           http://backend:3000
+      DEVICE_ID:             esp32-001
+      BAUD_RATE:             "115200"
+      SETTLE_S:              "1.5"
+      HANDSHAKE_TIMEOUT_S:   "5"
+      SKIP_HANDSHAKE:        "false"
+      POLL_S:                "3"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - enigma_net
+  firmware:
+    build:
+      context: ./firmware
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BACKEND_URL:          http://backend:3000
+      DEVICE_ID:            esp32-001-sim
+      ENTROPY_INTERVAL_MS:  "10000"
+      HTTP_TIMEOUT_S:       "10"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - enigma_net
+
+# ── Volumes ───────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+
+# ── Networks ──────────────────────────────────────────────────────────────
+networks:
+  enigma_net:
+    driver: bridge

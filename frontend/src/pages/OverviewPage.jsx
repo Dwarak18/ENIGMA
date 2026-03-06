@@ -10,6 +10,7 @@ import { getStatusColor } from '../utils.js';
 export default function OverviewPage({
   wsStatus, backendUrl, systemStatus,
   hardware, nextCaptureIn, ledgerEntries, pipeline,
+  trngStatus = { state: 'inactive', pipeline: [] },
 }) {
   return (
     <div className="space-y-6">
@@ -105,6 +106,50 @@ export default function OverviewPage({
 
       {/* Pipeline */}
       <div className="card">
+        {/* TRNG Pipeline State Banner */}
+        {(() => {
+          const stateColors = {
+            active:    { bg: 'rgba(16,185,129,0.08)', border: 'rgba(16,185,129,0.35)', dot: '#10b981', label: '⬡ TRNG ACTIVE', sub: 'Device verified — entropy pipeline running' },
+            suspended: { bg: 'rgba(239,68,68,0.08)',  border: 'rgba(239,68,68,0.35)',  dot: '#ef4444', label: '⬡ TRNG SUSPENDED', sub: 'Device disconnected — entropy unavailable (GET /latest → 503)' },
+            inactive:  { bg: 'rgba(113,113,122,0.08)', border: 'rgba(113,113,122,0.25)', dot: '#71717a', label: '⬡ TRNG INACTIVE', sub: 'No device paired — waiting for ESP32-S3 + ATECC608A' },
+          };
+          const c = stateColors[trngStatus.state] || stateColors.inactive;
+          return (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '12px',
+              padding: '10px 14px', marginBottom: '20px',
+              background: c.bg, border: `1px solid ${c.border}`, borderRadius: '2px',
+            }}>
+              <div className={trngStatus.state === 'active' ? 'animate-pulse' : ''} style={{
+                width: '10px', height: '10px', borderRadius: '50%',
+                background: c.dot, flexShrink: 0,
+                boxShadow: trngStatus.state === 'active' ? `0 0 8px ${c.dot}` : 'none',
+              }} />
+              <div style={{ flex: 1 }}>
+                <span style={{ fontSize: '11px', fontWeight: '700', color: c.dot, fontFamily: 'monospace', letterSpacing: '.06em' }}>
+                  {c.label}
+                </span>
+                <span style={{ fontSize: '9px', color: '#71717a', marginLeft: '12px' }}>{c.sub}</span>
+              </div>
+              {trngStatus.pipeline?.length > 0 && (
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {trngStatus.pipeline.map(d => {
+                    const dc = d.state === 'active' ? '#10b981' : d.state === 'suspended' ? '#ef4444' : '#52525b';
+                    return (
+                      <div key={d.device_id} style={{
+                        fontSize: '9px', color: dc, fontFamily: 'monospace',
+                        padding: '2px 8px', border: `1px solid ${dc}40`,
+                        background: `${dc}0f`, borderRadius: '2px',
+                      }}>
+                        {d.device_id} · {d.state}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         <h2 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '24px', color: '#d4d4d8' }}>
           PIPELINE STATUS
         </h2>
