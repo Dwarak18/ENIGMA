@@ -62,7 +62,9 @@ export default function App() {
   const [latestRecord, setLatestRecord] = useState(null);
   // Per-device realtime online states (overrides DB-computed `online`)
   const [deviceStates, setDeviceStates] = useState({});  // { [device_id]: { online, last_seen } }
-  // Toast queue: [{ id, device_id, online, ts }]
+  // Latest RTC time string received from firmware ("HH:MM:SS" from DS3231)
+  const [firmwareRtcTime, setFirmwareRtcTime] = useState(null);
+  // Toast queue: [{ id, device_id, online, rtc_time, ts }]
   const [toasts, setToasts] = useState([]);
 
   // ── Derived state ─────────────────────────────────────────────────
@@ -76,20 +78,22 @@ export default function App() {
       return {
         camera:    { connected: false, resolution: '1920x1080', fps: 30, lastCapture: null },
         esp32:     { online: false, lastHeartbeat: null, latency: 0 },
-        ds3231:    { synced: false, drift: 0, lastSync: null },
+        ds3231:    { synced: false, drift: 0, lastSync: null, rtc_time: null },
         atecc608a: { present: false, lastSigning: null, firmwareVersion: 'v2.1.3' },
       };
     }
     const d  = devs[0];
-    const on = d.online;
-    const paired = d.has_key || false;
+    const rt = deviceStates[d.device_id];  // realtime override
+    const on = rt ? rt.online : d.online;
+    const paired   = d.has_key || false;
+    const rtcTime  = rt?.rtc_time || null;
     return {
       camera:    { connected: on, resolution: '1920x1080', fps: 30, lastCapture: on ? d.last_seen : null },
-      esp32:     { online: on, paired, lastHeartbeat: d.last_seen, latency: 12, deviceId: d.device_id, records: d.record_count },
-      ds3231:    { synced: on, drift: on ? 0.3 : 0, lastSync: d.last_seen },
+      esp32:     { online: on, paired, lastHeartbeat: d.last_seen, latency: 12, deviceId: d.device_id, records: d.record_count, rtc_time: rtcTime },
+      ds3231:    { synced: on, drift: on ? 0.3 : 0, lastSync: d.last_seen, rtc_time: rtcTime },
       atecc608a: { present: paired, lastSigning: latestRecord?.created_at, firmwareVersion: 'v2.1.3' },
     };
-  }, [systemStatus, latestRecord]);
+  }, [systemStatus, latestRecord, deviceStates]);
 
   // ── REST loaders ──────────────────────────────────────────────────
   const loadHistory = useCallback(async () => {
@@ -131,20 +135,29 @@ export default function App() {
     socket.on('connect_error', () => setWsStatus('error'));
 
     /* Realtime device connect / disconnect */
-    socket.on('device:status', ({ device_id, online, last_seen }) => {
+    socket.on('device:status', ({ device_id, online, last_seen, rtc_time }) => {
+      // Store RTC time from the firmware when device connects
+      if (online && rtc_time) setFirmwareRtcTime(rtc_time);
       setDeviceStates(prev => {
         const wasOnline = prev[device_id]?.online;
         const changed   = wasOnline !== online;
         if (changed) {
           const id = `${device_id}-${Date.now()}`;
           setToasts(q => [
-            { id, device_id, online, ts: Date.now() },
+            { id, device_id, online, rtc_time: rtc_time || null, ts: Date.now() },
             ...q.slice(0, 4),
           ]);
           // Auto-dismiss after 5 s
           setTimeout(() => setToasts(q => q.filter(t => t.id !== id)), 5000);
         }
-        return { ...prev, [device_id]: { online, last_seen } };
+        return {
+          ...prev,
+          [device_id]: {
+            online,
+            last_seen,
+            rtc_time: rtc_time || prev[device_id]?.rtc_time || null,
+          },
+        };
       });
       /* Reflect into systemStatus.devices so all pages stay in sync */
       setSystemStatus(prev => {
@@ -166,7 +179,19 @@ export default function App() {
     socket.on('entropy:new', (rec) => {
       setRecords((prev) => [rec, ...prev].slice(0, 100));
       setLatestRecord(rec);
+      if (rec.rtc_time) setFirmwareRtcTime(rec.rtc_time);
       setCurrentFrame((f) => f + 1);
+      // Keep per-device rtc_time fresh so the sidebar badge and Time page stay live
+      if (rec.device_id && rec.rtc_time) {
+        setDeviceStates(prev => ({
+          ...prev,
+          [rec.device_id]: {
+            ...(prev[rec.device_id] || {}),
+            online:   true,
+            rtc_time: rec.rtc_time,
+          },
+        }));
+      }
     });
 
     socket.on('entropy:history', (hist) => {
@@ -321,11 +346,12 @@ export default function App() {
               hardware={hardware}
               systemStatus={systemStatus}
               latestRecord={latestRecord}
+              deviceStates={deviceStates}
             />
           )}
 
           {activePage === 'blockchain' && (
-            <BlockchainPage records={records} />
+            <BlockchainPage records={records} latestRecord={latestRecord} firmwareRtcTime={firmwareRtcTime} />
           )}
 
           {activePage === 'verification' && (
@@ -381,6 +407,11 @@ export default function App() {
               <div style={{ fontSize: '10px', color: toast.online ? '#10b981' : '#ef4444' }}>
                 {toast.online ? '⬡ DEVICE CONNECTED' : '○ DEVICE DISCONNECTED'}
               </div>
+              {toast.online && toast.rtc_time && (
+                <div style={{ fontSize: '10px', color: '#a1a1aa', marginTop: '2px', fontFamily: 'monospace' }}>
+                  RTC: {toast.rtc_time}
+                </div>
+              )}
             </div>
           </div>
         ))}

@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS entropy_records (
     signature       TEXT         NOT NULL,   -- 128-char hex raw ECDSA r||s
     aes_ciphertext  TEXT,                    -- 32-char hex  AES-256-CBC ciphertext (16-byte block)
     aes_iv          TEXT,                    -- 32-char hex  AES IV (16 bytes)
+    rtc_time        TEXT,                    -- "HH:MM:SS" IST from device DS3231 RTC
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
@@ -47,6 +48,7 @@ COMMENT ON COLUMN entropy_records.entropy_hash     IS 'SHA-256(AES_key || IST_da
 COMMENT ON COLUMN entropy_records.signature        IS 'Raw ECDSA secp256r1 signature r||s in hex';
 COMMENT ON COLUMN entropy_records.aes_ciphertext   IS 'AES-256-CBC encrypted entropy (32-char hex)';
 COMMENT ON COLUMN entropy_records.aes_iv           IS 'AES CBC IV used for this record (32-char hex)';
+COMMENT ON COLUMN entropy_records.rtc_time         IS 'DS3231 RTC time string "HH:MM:SS" (IST) from device';
 COMMENT ON COLUMN entropy_records.created_at       IS 'Server-side insertion timestamp';
 
 -- =============================================================================
@@ -84,6 +86,7 @@ CREATE OR REPLACE VIEW entropy_feed AS
         er.signature,
         er.aes_ciphertext,
         er.aes_iv,
+        er.rtc_time,
         er.created_at,
         d.public_key
     FROM entropy_records er
@@ -98,4 +101,5 @@ COMMENT ON VIEW entropy_feed IS 'Enriched entropy records joined with device pub
 -- =============================================================================
 ALTER TABLE entropy_records
     ADD COLUMN IF NOT EXISTS aes_ciphertext TEXT,
-    ADD COLUMN IF NOT EXISTS aes_iv         TEXT;
+    ADD COLUMN IF NOT EXISTS aes_iv         TEXT,
+    ADD COLUMN IF NOT EXISTS rtc_time       TEXT;

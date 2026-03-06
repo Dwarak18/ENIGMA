@@ -46,6 +46,7 @@ export default function DevicePairingBadge({ devices = [], deviceStates = {} }) 
         const isPaired = device.has_key;
         const isOnline = rt ? rt.online : device.online;
         const lastSeen = (rt?.last_seen) || device.last_seen;
+        const rtcTime  = rt?.rtc_time || null;
 
         /* colour / label logic */
         let dotColor  = '#ef4444';   /* red   – not paired */
@@ -117,6 +118,11 @@ export default function DevicePairingBadge({ devices = [], deviceStates = {} }) 
               <div style={{ fontSize: '9px', color: labelColor, marginTop: '1px', transition: 'color 0.4s' }}>
                 {label}
               </div>
+              {isOnline && rtcTime && (
+                <div style={{ fontSize: '9px', color: '#10b981', marginTop: '1px', fontFamily: 'monospace', letterSpacing: '.04em' }}>
+                  ◷ {rtcTime} IST
+                </div>
+              )}
               <div style={{ fontSize: '9px', color: '#52525b', marginTop: '1px' }}>
                 last: {lastSeenText}
               </div>

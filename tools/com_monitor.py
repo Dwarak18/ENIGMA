@@ -29,6 +29,8 @@ import sys
 import time
 import logging
 import threading
+import subprocess
+import pathlib
 import requests
 
 # ── Logging ────────────────────────────────────────────────────────────────
@@ -40,9 +42,22 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────
-BACKEND_URL = os.environ.get('BACKEND_URL', 'http://localhost')
-DEFAULT_DEVICE_ID = os.environ.get('DEVICE_ID', 'esp32-001')
-POLL_S      = int(os.environ.get('POLL_S', '3'))
+BACKEND_URL       = os.environ.get('BACKEND_URL',       'http://localhost')
+DEFAULT_DEVICE_ID = os.environ.get('DEVICE_ID',         'esp32-001')
+POLL_S            = int(os.environ.get('POLL_S',         '3'))
+
+# The specific COM port to watch for the ENIGMA ESP32 device.
+TARGET_PORT = os.environ.get('TARGET_COM_PORT', 'COM7').upper()
+
+# Path to the firmware Python simulator — resolved relative to this script.
+_TOOLS_DIR      = pathlib.Path(__file__).parent
+FIRMWARE_SCRIPT = os.environ.get(
+    'FIRMWARE_SCRIPT',
+    str(_TOOLS_DIR.parent / 'firmware' / 'simulate.py'),
+)
+# Backend URL forwarded to the simulator process (may differ from BACKEND_URL
+# if the monitor runs outside Docker while the backend runs inside).
+SIMULATOR_BACKEND_URL = os.environ.get('SIMULATOR_BACKEND_URL', 'http://localhost:3000')
 
 DEVICE_STATUS_URL = f"{BACKEND_URL}/api/v1/system/device-status"
 
@@ -61,10 +76,8 @@ ESP32_SIGNATURES = [
     'ESP32-S3',
 ]
 
-# ── Optional: map COM port name → device_id ───────────────────────────────
-# e.g.  PORT_TO_DEVICE = {'COM5': 'esp32-001', 'COM6': 'esp32-002'}
-# If a port is not in this dict the DEFAULT_DEVICE_ID is used.
-PORT_TO_DEVICE: dict[str, str] = {}
+# ── Map TARGET_PORT → device_id (all other ports use DEFAULT_DEVICE_ID) ───
+PORT_TO_DEVICE: dict[str, str] = {TARGET_PORT: DEFAULT_DEVICE_ID}
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -92,6 +105,75 @@ def device_id_for_port(com_port: str | None) -> str:
     return DEFAULT_DEVICE_ID
 
 
+# ══════════════════════════════════════════════════════════════════════════
+#  Firmware simulator subprocess management
+# ══════════════════════════════════════════════════════════════════════════
+
+_sim_proc: subprocess.Popen | None = None
+_sim_lock = threading.Lock()
+
+
+def _pipe_sim_output(proc: subprocess.Popen) -> None:
+    """Forward simulator stdout/stderr to our logger (runs in daemon thread)."""
+    assert proc.stdout
+    for raw in iter(proc.stdout.readline, b''):
+        log.info('[sim] %s', raw.decode(errors='replace').rstrip())
+
+
+def launch_firmware(device_id: str, com_port: str) -> None:
+    """Spawn firmware/simulate.py as a subprocess for the connected device."""
+    global _sim_proc
+    with _sim_lock:
+        if _sim_proc and _sim_proc.poll() is None:
+            log.info('Firmware simulator already running (pid=%d)', _sim_proc.pid)
+            return
+        sim_path = pathlib.Path(FIRMWARE_SCRIPT)
+        if not sim_path.is_file():
+            log.error('Firmware simulator not found: %s', sim_path)
+            return
+        env = os.environ.copy()
+        env['BACKEND_URL'] = SIMULATOR_BACKEND_URL
+        env['DEVICE_ID']   = device_id
+        try:
+            _sim_proc = subprocess.Popen(
+                [sys.executable, str(sim_path)],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+            )
+            log.info(
+                '✓ Firmware simulator started  pid=%-6d  device=%s  port=%s',
+                _sim_proc.pid, device_id, com_port,
+            )
+            threading.Thread(
+                target=_pipe_sim_output,
+                args=(_sim_proc,),
+                daemon=True,
+                name='sim-pipe',
+            ).start()
+        except Exception as exc:
+            log.error('Failed to launch firmware simulator: %s', exc)
+
+
+def stop_firmware(device_id: str) -> None:
+    """Terminate the running firmware simulator subprocess."""
+    global _sim_proc
+    with _sim_lock:
+        if not _sim_proc or _sim_proc.poll() is not None:
+            log.info('No running firmware simulator to stop.')
+            return
+        pid = _sim_proc.pid
+        log.info('Stopping firmware simulator  pid=%-6d  device=%s', pid, device_id)
+        _sim_proc.terminate()
+        try:
+            _sim_proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            log.warning('Simulator did not exit; sending SIGKILL  pid=%d', pid)
+            _sim_proc.kill()
+        _sim_proc = None
+        log.info('Firmware simulator stopped  pid=%d', pid)
+
+
 def post_status(device_id: str, online: bool, com_port: str | None) -> None:
     payload = {'device_id': device_id, 'online': online, 'com_port': com_port}
     try:
@@ -99,6 +181,13 @@ def post_status(device_id: str, online: bool, com_port: str | None) -> None:
         if r.status_code == 200:
             state = 'CONNECTED' if online else 'DISCONNECTED'
             log.info('✓ %-12s %s  (port=%s)', device_id, state, com_port or '?')
+            # Automatically start / stop the firmware simulator when the
+            # target COM port (default: COM7) is plugged or unplugged.
+            if com_port and com_port.upper() == TARGET_PORT:
+                if online:
+                    launch_firmware(device_id, com_port)
+                else:
+                    stop_firmware(device_id)
         else:
             log.warning('Backend returned HTTP %d: %s', r.status_code, r.text[:200])
     except requests.exceptions.ConnectionError:
@@ -248,9 +337,12 @@ def main() -> None:
     log.info('╔══════════════════════════════════════════════════════════════╗')
     log.info('║         ENIGMA – ESP32 COM Port Monitor                      ║')
     log.info('╚══════════════════════════════════════════════════════════════╝')
-    log.info('  backend : %s', BACKEND_URL)
-    log.info('  device  : %s (default)', DEFAULT_DEVICE_ID)
-    log.info('  watching: %s', ', '.join(ESP32_SIGNATURES[:4]) + '…')
+    log.info('  backend    : %s', BACKEND_URL)
+    log.info('  device     : %s (default)', DEFAULT_DEVICE_ID)
+    log.info('  target port: %s  ← firmware auto-launch enabled', TARGET_PORT)
+    log.info('  simulator  : %s', FIRMWARE_SCRIPT)
+    log.info('  sim backend: %s', SIMULATOR_BACKEND_URL)
+    log.info('  watching   : %s', ', '.join(ESP32_SIGNATURES[:4]) + '…')
     log.info('')
 
     # Wait for backend to be reachable

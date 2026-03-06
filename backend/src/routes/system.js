@@ -114,10 +114,10 @@ router.get('/status', async (_req, res) => {
 /* ── POST /api/v1/system/device-status ───────────────────────────────────
  * Called by the Windows COM port monitor (tools/com_monitor.py) whenever
  * an ESP32 device is physically plugged or unplugged.
- * Body: { device_id, online: true|false, com_port: "COM5" }
+ * Body: { device_id, online: true|false, com_port: "COM7", rtc_time?: "HH:MM:SS" }
  * ──────────────────────────────────────────────────────────────────────── */
 router.post('/device-status', (req, res) => {
-  const { device_id, online, com_port } = req.body;
+  const { device_id, online, com_port, rtc_time } = req.body;
 
   if (!device_id || typeof online !== 'boolean') {
     return res.status(400).json({
@@ -127,9 +127,9 @@ router.post('/device-status', (req, res) => {
     });
   }
 
-  forceDeviceStatus(device_id, online, com_port || null);
+  forceDeviceStatus(device_id, online, com_port || null, rtc_time || null);
 
-  logger.info('Device status forced via COM monitor', { device_id, online, com_port });
+  logger.info('Device status forced via COM monitor', { device_id, online, com_port, rtc_time });
   return res.json({ ok: true, device_id, online });
 });
 

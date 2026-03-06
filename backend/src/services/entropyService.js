@@ -28,18 +28,19 @@ const DEVICE_WATCHDOG_MS = 35_000;   // 3.5× the 10s posting interval
 const _deviceTimers = new Map();     // device_id → NodeJS.Timeout
 const _deviceOnline = new Map();     // device_id → boolean
 
-function _emitDeviceStatus(device_id, online, last_seen) {
+function _emitDeviceStatus(device_id, online, last_seen, rtc_time) {
   if (_io) {
     _io.emit('device:status', {
       device_id,
       online,
       last_seen: last_seen || null,
+      rtc_time:  rtc_time  || null,
       ts: Date.now(),
     });
   }
 }
 
-function _trackDeviceHeartbeat(device_id, last_seen) {
+function _trackDeviceHeartbeat(device_id, last_seen, rtc_time) {
   _deviceOnline.set(device_id, true);
 
   // Reset the watchdog
@@ -49,13 +50,13 @@ function _trackDeviceHeartbeat(device_id, last_seen) {
     _deviceOnline.set(device_id, false);
     _deviceTimers.delete(device_id);
     logger.info('Device went offline (watchdog timeout)', { device_id });
-    _emitDeviceStatus(device_id, false, null);
+    _emitDeviceStatus(device_id, false, null, null);
   }, DEVICE_WATCHDOG_MS);
 
   _deviceTimers.set(device_id, timer);
 
-  // Always emit heartbeat so frontend refreshes last_seen
-  _emitDeviceStatus(device_id, true, last_seen);
+  // Always emit heartbeat so frontend refreshes last_seen + rtc_time
+  _emitDeviceStatus(device_id, true, last_seen, rtc_time || null);
 }
 
 /**
@@ -77,8 +78,9 @@ function getDeviceStatuses() {
  * @param {string} device_id
  * @param {boolean} online
  * @param {string|null} [com_port] optional COM port label for logging
+ * @param {string|null} [rtc_time] optional RTC time string from firmware ("HH:MM:SS")
  */
-function forceDeviceStatus(device_id, online, com_port) {
+function forceDeviceStatus(device_id, online, com_port, rtc_time) {
   // Clear any existing watchdog
   if (_deviceTimers.has(device_id)) {
     clearTimeout(_deviceTimers.get(device_id));
@@ -89,11 +91,11 @@ function forceDeviceStatus(device_id, online, com_port) {
 
   logger.info(
     online ? 'COM monitor: device connected' : 'COM monitor: device disconnected',
-    { device_id, com_port: com_port || 'unknown' }
+    { device_id, com_port: com_port || 'unknown', rtc_time: rtc_time || null }
   );
 
-  // Emit immediately
-  _emitDeviceStatus(device_id, online, null);
+  // Emit immediately — include rtc_time so the frontend can display it
+  _emitDeviceStatus(device_id, online, null, rtc_time || null);
 
   // If forced online, arm the watchdog so it auto-expires if firmware never posts
   if (online) {
@@ -101,7 +103,7 @@ function forceDeviceStatus(device_id, online, com_port) {
       _deviceOnline.set(device_id, false);
       _deviceTimers.delete(device_id);
       logger.info('Device watchdog expired after COM-online signal', { device_id });
-      _emitDeviceStatus(device_id, false, null);
+      _emitDeviceStatus(device_id, false, null, null);
     }, DEVICE_WATCHDOG_MS);
     _deviceTimers.set(device_id, timer);
   }
@@ -208,11 +210,11 @@ async function processEntropy(payload) {
   let record;
   try {
     const res = await pool.query(`
-      INSERT INTO entropy_records (device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv)
-      VALUES ($1, $2, $3, $4, $5, $6)
-      RETURNING id, device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, created_at
+      INSERT INTO entropy_records (device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, rtc_time)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
+      RETURNING id, device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, rtc_time, created_at
     `, [device_id, timestamp, entropy_hash, signature,
-        aes_ciphertext || null, aes_iv || null]);
+        aes_ciphertext || null, aes_iv || null, rtc_time || null]);
     record = res.rows[0];
   } catch (dbErr) {
     if (dbErr.code === '23505') {   /* unique_violation */
@@ -241,16 +243,16 @@ async function processEntropy(payload) {
       signature:       record.signature,
       aes_ciphertext:  record.aes_ciphertext || null,
       aes_iv:          record.aes_iv         || null,
+      rtc_time:        record.rtc_time        || null,
       created_at:      record.created_at,
       verified:        true,
-      rtc_time:        rtc_time || null,
     });
   }
 
   logger.info('Entropy record stored and broadcast', { id: record.id, device_id });
 
   // ── Device presence heartbeat ──────────────────────────────────────
-  _trackDeviceHeartbeat(device_id, record.created_at);
+  _trackDeviceHeartbeat(device_id, record.created_at, rtc_time || null);
 
   return record;
 }
@@ -260,7 +262,8 @@ async function processEntropy(payload) {
  */
 async function getLatest(limit = 1) {
   const res = await pool.query(`
-    SELECT id, device_id, timestamp, entropy_hash, signature, created_at
+    SELECT id, device_id, timestamp, entropy_hash, signature,
+           aes_ciphertext, aes_iv, rtc_time, created_at
     FROM entropy_records
     ORDER BY created_at DESC
     LIMIT $1
@@ -273,7 +276,8 @@ async function getLatest(limit = 1) {
  */
 async function getHistory(limit = 100) {
   const res = await pool.query(`
-    SELECT id, device_id, timestamp, entropy_hash, signature, created_at
+    SELECT id, device_id, timestamp, entropy_hash, signature,
+           aes_ciphertext, aes_iv, rtc_time, created_at
     FROM entropy_records
     ORDER BY created_at DESC
     LIMIT $1

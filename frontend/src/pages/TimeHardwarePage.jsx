@@ -5,10 +5,20 @@
 import { useState, useEffect } from 'react';
 import StatusBadge from '../components/StatusBadge.jsx';
 
-export default function TimeHardwarePage({ hardware, systemStatus, latestRecord }) {
+export default function TimeHardwarePage({ hardware, systemStatus, latestRecord, deviceStates = {} }) {
   const hw   = hardware || {};
   const devs = systemStatus?.devices || [];
   const [now, setNow] = useState(new Date());
+
+  // Pull firmware rtc_time from the first device's realtime state
+  const firstDeviceId = devs[0]?.device_id;
+  const firmwareRtcTime = (
+    (firstDeviceId && deviceStates[firstDeviceId]?.rtc_time) ||
+    hw.ds3231?.rtc_time ||
+    latestRecord?.rtc_time ||
+    null
+  );
+  const deviceOnline = hw.esp32?.online || false;
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -56,6 +66,18 @@ export default function TimeHardwarePage({ hardware, systemStatus, latestRecord 
               ? new Date(hw.ds3231.lastSync).toISOString().replace('T', ' ').slice(0, 19)
               : '—'}
           </div>
+          {/* Live firmware RTC time */}
+          {firmwareRtcTime && (
+            <div style={{
+              marginTop: '10px', padding: '8px 12px',
+              background: 'rgba(16,185,129,0.08)',
+              border: '1px solid rgba(16,185,129,0.3)',
+              borderRadius: '2px',
+            }}>
+              <div style={{ fontSize: '9px', color: '#71717a', textTransform: 'uppercase', marginBottom: '3px' }}>Firmware RTC (IST)</div>
+              <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#10b981', letterSpacing: '.05em', fontFamily: 'monospace' }}>{firmwareRtcTime}</div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -176,6 +198,50 @@ export default function TimeHardwarePage({ hardware, systemStatus, latestRecord 
           </div>
         </div>
       )}
+
+      {/* Firmware Confirmation Time – shown when device is online */}
+      <div className="card" style={{
+        border: deviceOnline ? '1px solid rgba(16,185,129,0.4)' : '1px solid #27272a',
+        background: deviceOnline ? 'rgba(16,185,129,0.05)' : undefined,
+        transition: 'border-color 0.5s, background 0.5s',
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px' }}>
+          <div style={{ fontSize: '10px', color: '#71717a', textTransform: 'uppercase', letterSpacing: '.05em' }}>
+            Firmware Confirmation Time (IST / DS3231)
+          </div>
+          <div style={{
+            fontSize: '9px', fontWeight: '700', letterSpacing: '.1em', padding: '2px 8px',
+            borderRadius: '2px',
+            background: deviceOnline && firmwareRtcTime ? 'rgba(16,185,129,0.15)' : 'rgba(63,63,70,0.3)',
+            color:       deviceOnline && firmwareRtcTime ? '#10b981'              : '#71717a',
+            border:      deviceOnline && firmwareRtcTime ? '1px solid rgba(16,185,129,0.4)' : '1px solid #3f3f46',
+          }}>
+            {deviceOnline && firmwareRtcTime ? '● CONFIRMED' : '○ AWAITING'}
+          </div>
+        </div>
+        {firmwareRtcTime ? (
+          <div>
+            <div style={{ fontSize: '32px', fontWeight: 'bold', color: '#10b981', letterSpacing: '.06em', fontFamily: 'monospace' }}>
+              {firmwareRtcTime}
+            </div>
+            {latestRecord?.timestamp && (
+              <div style={{ fontSize: '12px', color: '#71717a', marginTop: '6px' }}>
+                Full IST: {(() => {
+                  const ist = new Date((latestRecord.timestamp + 19800) * 1000);
+                  return ist.toISOString().replace('T', ' ').slice(0, 19) + ' IST';
+                })()}
+              </div>
+            )}
+            <div style={{ fontSize: '11px', color: '#52525b', marginTop: '4px' }}>
+              Hash key: SHA-256(AES‑key ‖ IST‑datetime) → Anchored to blockchain
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: '13px', color: '#52525b' }}>
+            Waiting for device to connect on COM7…
+          </div>
+        )}
+      </div>
     </div>
   );
 }

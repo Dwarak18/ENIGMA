@@ -21,12 +21,65 @@ $BackendUrl    = if ($env:BACKEND_URL) { $env:BACKEND_URL } else { "http://local
 $DefaultDevice = if ($env:DEVICE_ID)   { $env:DEVICE_ID }   else { "esp32-001" }
 $ApiEndpoint   = "$BackendUrl/api/v1/system/device-status"
 
+# The specific COM port to watch for the ENIGMA ESP32 device.
+$TargetPort    = if ($env:TARGET_COM_PORT) { $env:TARGET_COM_PORT.ToUpper() } else { "COM7" }
+
+# Path to the firmware Python simulator – resolved relative to this script.
+$FirmwareScript = if ($env:FIRMWARE_SCRIPT) {
+    $env:FIRMWARE_SCRIPT
+} else {
+    Join-Path (Split-Path $PSScriptRoot -Parent) "firmware\simulate.py"
+}
+$SimulatorBackendUrl = if ($env:SIMULATOR_BACKEND_URL) { $env:SIMULATOR_BACKEND_URL } else { "http://localhost:3000" }
+
 # USB-serial chip descriptions that indicate an ESP32 dev board
 $Esp32Keywords = @("CH340","CH341","CP210","Silicon Labs","FTDI","FT232","USB Serial","ESP32")
 
 # Optional: map COM port -> device_id
 # Example: $PortDeviceMap = @{ "COM5" = "esp32-001"; "COM6" = "esp32-002" }
 $PortDeviceMap = @{}
+
+# ---- Firmware simulator management --------------------------------------
+$script:SimProcess = $null
+
+function Start-FirmwareSimulator {
+    param([string]$DeviceId, [string]$ComPort)
+    if ($script:SimProcess -and -not $script:SimProcess.HasExited) {
+        Write-Log "INFO" "Firmware simulator already running (PID=$($script:SimProcess.Id))"
+        return
+    }
+    if (-not (Test-Path $FirmwareScript)) {
+        Write-Log "WARN" "Firmware simulator not found: $FirmwareScript"
+        return
+    }
+    $env:BACKEND_URL  = $SimulatorBackendUrl
+    $env:DEVICE_ID    = $DeviceId
+    $startInfo                       = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName              = "python"
+    $startInfo.Arguments             = "`"$FirmwareScript`""
+    $startInfo.UseShellExecute       = $false
+    $startInfo.RedirectStandardOutput = $false   # let simulator print to console
+    try {
+        $script:SimProcess = [System.Diagnostics.Process]::Start($startInfo)
+        Write-Log "INFO" "Firmware simulator started  PID=$($script:SimProcess.Id)  device=$DeviceId  port=$ComPort"
+    } catch {
+        Write-Log "ERROR" "Failed to launch firmware simulator: $($_.Exception.Message)"
+    }
+}
+
+function Stop-FirmwareSimulator {
+    param([string]$DeviceId)
+    if ($null -eq $script:SimProcess -or $script:SimProcess.HasExited) {
+        Write-Log "INFO" "No running firmware simulator to stop."
+        return
+    }
+    $pid = $script:SimProcess.Id
+    Write-Log "INFO" "Stopping firmware simulator  PID=$pid  device=$DeviceId"
+    try { $script:SimProcess.Kill() } catch {}
+    $script:SimProcess.WaitForExit(5000) | Out-Null
+    $script:SimProcess = $null
+    Write-Log "INFO" "Firmware simulator stopped  PID=$pid"
+}
 
 # ---- Helpers -------------------------------------------------------------
 function Write-Log {
@@ -80,6 +133,14 @@ function Send-DeviceStatus {
                     -ErrorAction Stop
         $state = if ($Online) { "CONNECTED" } else { "DISCONNECTED" }
         Write-Log "INFO" "OK  $DeviceId  $state  (port=$ComPort)"
+        # Auto-launch/stop the firmware simulator when the target COM port changes
+        if ($ComPort -and $ComPort.ToUpper() -eq $TargetPort) {
+            if ($Online) {
+                Start-FirmwareSimulator -DeviceId $DeviceId -ComPort $ComPort
+            } else {
+                Stop-FirmwareSimulator -DeviceId $DeviceId
+            }
+        }
     }
     catch {
         Write-Log "WARN" "Backend unreachable - $($_.Exception.Message)"
@@ -127,6 +188,7 @@ Write-Host "====================================================================
 Write-Host ""
 Write-Log "INFO" "Backend  : $BackendUrl"
 Write-Log "INFO" "Device   : $DefaultDevice (default)"
+Write-Log "INFO" "Target   : $TargetPort  (firmware auto-launch port)"
 Write-Log "INFO" "Keywords : $($Esp32Keywords -join ', ')"
 Write-Host ""
 

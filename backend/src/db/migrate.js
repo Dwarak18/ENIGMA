@@ -27,12 +27,14 @@ CREATE TABLE IF NOT EXISTS entropy_records (
     signature       TEXT        NOT NULL,        -- 128-char hex ECDSA r||s
     aes_ciphertext  TEXT,                        -- 32-char hex AES-256-CBC ciphertext
     aes_iv          TEXT,                        -- 32-char hex AES IV (16 bytes)
+    rtc_time        TEXT,                        -- "HH:MM:SS" IST from device DS3231
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- ── AES columns (idempotent – safe to re-run on older schemas) ─────────
+-- ── AES + RTC columns (idempotent – safe to re-run on older schemas) ────
 ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS aes_ciphertext TEXT;
 ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS aes_iv         TEXT;
+ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS rtc_time       TEXT;
 
 -- ── Indexes ────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_entropy_device_id      ON entropy_records (device_id);
@@ -54,6 +56,7 @@ CREATE OR REPLACE VIEW entropy_feed AS
         er.signature,
         er.aes_ciphertext,
         er.aes_iv,
+        er.rtc_time,
         er.created_at,
         d.public_key
     FROM entropy_records er

@@ -1,23 +1,29 @@
 #!/usr/bin/env python3
 """
-ENIGMA Firmware Simulator
-─────────────────────────
-Runs inside the espressif/idf Docker image and reproduces exactly what the
-ESP32 firmware does on every entropy cycle:
+ENIGMA Pro Firmware Simulator
+──────────────────────────────
+Reproduces exactly what the ESP32 Enigma_pro.c firmware does on every cycle:
 
-  1. Collect 64 bytes of OS-level random entropy
-  2. Build timestamp (Unix epoch, seconds)
-  3. Compute SHA-256(entropy || timestamp_8bytes_LE)  ← matches crypto_hash()
-  4. Sign that digest with ECDSA/P-256               ← matches sign_hash()
-     (Node.js createVerify('SHA256').update(digest) applies SHA-256 to the
-      digest again; so we use ECDSA(SHA-256) here to produce a matching sig)
-  5. POST JSON payload to backend /api/v1/entropy
-  6. Sleep for ENTROPY_INTERVAL_MS, repeat forever
+  1.  Generate 16 random bytes (plaintext entropy)
+  2.  Generate a fresh 16-byte random IV
+  3.  AES-256-CBC encrypt the plaintext          → 16-byte ciphertext
+  4.  Build IST (UTC+5:30) datetime string       "YYYY-MM-DD HH:MM:SS"
+  5.  SHA-256( AES_key[32] ‖ IST_datetime_str )  → 32-byte entropy_hash
+  6.  ECDSA/P-256 sign the entropy_hash          → 64-byte raw signature
+       (backend verifier applies SHA-256 before the ECDSA check, so we
+        use ec.ECDSA(hashes.SHA256()) to produce a matching signature)
+  7.  POST JSON payload to /api/v1/entropy with:
+        device_id, timestamp, entropy_hash, signature,
+        rtc_time (HH:MM:SS IST), aes_ciphertext, aes_iv,
+        public_key (first cycle only)
+  8.  Sleep for ENTROPY_INTERVAL_MS, repeat
+
+The AES-256 key is generated once and persisted to disk so it survives
+simulator restarts — exactly like the NVS key on the ESP32.
 
 Environment variables (all have defaults):
   BACKEND_URL          http://backend:3000
   DEVICE_ID            esp32-001-sim
-  ENTROPY_BYTES        64
   ENTROPY_INTERVAL_MS  10000
   HTTP_TIMEOUT_S       10
 """
@@ -25,15 +31,14 @@ Environment variables (all have defaults):
 import os
 import time
 import hashlib
-import struct
 import secrets
 import logging
-from datetime import datetime, timezone
 
 import requests
 from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 # ── Logging ────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -44,40 +49,61 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────
-BACKEND_URL       = os.environ.get('BACKEND_URL',         'http://backend:3000')
-DEVICE_ID         = os.environ.get('DEVICE_ID',           'esp32-001-sim')
-ENTROPY_BYTES     = int(os.environ.get('ENTROPY_BYTES',   '64'))
-INTERVAL_MS       = int(os.environ.get('ENTROPY_INTERVAL_MS', '10000'))
-HTTP_TIMEOUT_S    = int(os.environ.get('HTTP_TIMEOUT_S',  '10'))
-KEY_FILE          = '/tmp/enigma_sim_key.pem'
+BACKEND_URL       = os.environ.get('BACKEND_URL',              'http://backend:3000')
+DEVICE_ID         = os.environ.get('DEVICE_ID',                'esp32-001-sim')
+INTERVAL_MS       = int(os.environ.get('ENTROPY_INTERVAL_MS',  '10000'))
+HTTP_TIMEOUT_S    = int(os.environ.get('HTTP_TIMEOUT_S',        '10'))
+
+ECDSA_KEY_FILE    = '/tmp/enigma_sim_key.pem'
+AES_KEY_FILE      = '/tmp/enigma_sim_aes_key.bin'
+
+# IST = UTC + 5 h 30 min
+IST_OFFSET_SECS   = 5 * 3600 + 30 * 60
 
 ENTROPY_ENDPOINT  = f"{BACKEND_URL}/api/v1/entropy"
 
 # ── Retry on startup ────────────────────────────────────────────────────────
-STARTUP_RETRY_S   = 5    # seconds between backend health-check retries
-STARTUP_TIMEOUT_S = 120  # give up after this long
+STARTUP_RETRY_S   = 5
+STARTUP_TIMEOUT_S = 120
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Crypto helpers – mirror the C firmware exactly
+#  Key management – mirror ESP32 NVS persistence
 # ══════════════════════════════════════════════════════════════════════════
 
 def load_or_generate_key() -> ec.EllipticCurvePrivateKey:
-    """Load the simulator's ECDSA keypair from disk or generate a new one."""
-    if os.path.exists(KEY_FILE):
-        log.info("Reusing existing keypair from %s", KEY_FILE)
-        with open(KEY_FILE, 'rb') as f:
+    """Load the ECDSA keypair from disk or generate a new one."""
+    if os.path.exists(ECDSA_KEY_FILE):
+        log.info("Reusing existing ECDSA keypair from %s", ECDSA_KEY_FILE)
+        with open(ECDSA_KEY_FILE, 'rb') as f:
             return serialization.load_pem_private_key(f.read(), password=None)
 
     log.info("Generating new secp256r1 (P-256) keypair …")
     key = ec.generate_private_key(ec.SECP256R1())
-    with open(KEY_FILE, 'wb') as f:
+    with open(ECDSA_KEY_FILE, 'wb') as f:
         f.write(key.private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption(),
         ))
-    log.info("Keypair saved to %s", KEY_FILE)
+    log.info("ECDSA keypair saved to %s", ECDSA_KEY_FILE)
+    return key
+
+
+def load_or_generate_aes_key() -> bytes:
+    """Load the 32-byte AES-256 key from disk or generate a persistent one."""
+    if os.path.exists(AES_KEY_FILE):
+        with open(AES_KEY_FILE, 'rb') as f:
+            key = f.read()
+        if len(key) == 32:
+            log.info("Reusing existing AES-256 key from %s", AES_KEY_FILE)
+            return key
+
+    log.info("Generating new AES-256 key …")
+    key = secrets.token_bytes(32)
+    with open(AES_KEY_FILE, 'wb') as f:
+        f.write(key)
+    log.info("AES-256 key saved to %s", AES_KEY_FILE)
     return key
 
 
@@ -91,13 +117,30 @@ def pubkey_uncompressed_hex(key: ec.EllipticCurvePrivateKey) -> str:
     return raw.hex()
 
 
-def compute_hash(entropy: bytes, timestamp: int) -> bytes:
+# ══════════════════════════════════════════════════════════════════════════
+#  Enigma Pro crypto pipeline – mirrors Enigma_pro.c exactly
+# ══════════════════════════════════════════════════════════════════════════
+
+def aes_cbc_encrypt(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
+    """AES-256-CBC encrypt one 16-byte block.  iv is consumed (not modified)."""
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+    enc = cipher.encryptor()
+    return enc.update(plaintext) + enc.finalize()
+
+
+def ist_datetime_str(utc_epoch: int) -> str:
+    """Return 'YYYY-MM-DD HH:MM:SS' in IST (UTC+5:30)."""
+    ist_epoch = utc_epoch + IST_OFFSET_SECS
+    t = time.gmtime(ist_epoch)
+    return time.strftime('%Y-%m-%d %H:%M:%S', t)
+
+
+def compute_hash_pro(aes_key: bytes, datetime_str: str) -> bytes:
     """
-    SHA-256(entropy_bytes || timestamp_8bytes_LE)
-    Mirrors firmware crypto_hash() exactly.
+    SHA-256( AES_key[32] ‖ IST_datetime_str )
+    Mirrors sha256_key_datetime() in Enigma_pro.c exactly.
     """
-    ts_le = struct.pack('<Q', timestamp)   # 8-byte little-endian uint64
-    return hashlib.sha256(entropy + ts_le).digest()
+    return hashlib.sha256(aes_key + datetime_str.encode()).digest()
 
 
 def ecdsa_sign_raw(key: ec.EllipticCurvePrivateKey, hash_bytes: bytes) -> bytes:
@@ -108,8 +151,9 @@ def ecdsa_sign_raw(key: ec.EllipticCurvePrivateKey, hash_bytes: bytes) -> bytes:
         crypto.createVerify('SHA256').update(hashBuf).verify(pubkey, derSig)
 
     which applies SHA-256 to hashBuf internally before the ECDSA check.
-    So we sign with ec.ECDSA(hashes.SHA256()) – the library hashes hash_bytes
-    with SHA-256 before signing, matching what the Node verifier expects.
+    We use ec.ECDSA(hashes.SHA256()) so the library hashes hash_bytes with
+    SHA-256 before signing — producing a signature that the Node verifier
+    accepts.
 
     Returns: raw 64-byte signature (r || s, each 32 bytes big-endian)
     """
@@ -143,89 +187,104 @@ def wait_for_backend() -> None:
 
 
 # ══════════════════════════════════════════════════════════════════════════
-#  Main entropy loop
+#  Main entropy loop  –  Enigma Pro pipeline
 # ══════════════════════════════════════════════════════════════════════════
 
 def main() -> None:
     log.info("╔══════════════════════════════════════════════════════════════╗")
-    log.info("║       ENIGMA Firmware Simulator – ESP-IDF Docker Image       ║")
+    log.info("║       ENIGMA Pro Firmware Simulator (COM7 / ESP32)           ║")
     log.info("╚══════════════════════════════════════════════════════════════╝")
     log.info("  device    : %s", DEVICE_ID)
     log.info("  endpoint  : %s", ENTROPY_ENDPOINT)
     log.info("  interval  : %d ms", INTERVAL_MS)
-    log.info("  entropy   : %d bytes", ENTROPY_BYTES)
+    log.info("  pipeline  : AES-256-CBC → SHA-256(key‖datetime) → ECDSA")
 
     wait_for_backend()
 
-    key          = load_or_generate_key()
-    pubkey_hex   = pubkey_uncompressed_hex(key)
-    pubkey_sent  = False
+    ecdsa_key   = load_or_generate_key()
+    aes_key     = load_or_generate_aes_key()
+    pubkey_hex  = pubkey_uncompressed_hex(ecdsa_key)
+    pubkey_sent = False
 
-    log.info("Public key (first 20 chars): %s…", pubkey_hex[:20])
+    log.info("ECDSA public key (first 20 chars): %s…", pubkey_hex[:20])
+    log.info("AES-256 key     (first 8 chars) : %s…", aes_key.hex()[:8])
 
     while True:
         cycle_start = time.monotonic()
 
         try:
-            # ── 1. Entropy ──────────────────────────────────────────────
-            entropy = secrets.token_bytes(ENTROPY_BYTES)
-
-            # ── 2. Timestamp ────────────────────────────────────────────
+            # ── 1. Unix timestamp ────────────────────────────────────────
             timestamp = int(time.time())
 
-            # ── 3. Hash ─────────────────────────────────────────────────
-            hash_bytes = compute_hash(entropy, timestamp)
+            # ── 2. IST datetime string  "YYYY-MM-DD HH:MM:SS" ────────────
+            ist_datetime = ist_datetime_str(timestamp)
+            rtc_time     = ist_datetime[11:]          # "HH:MM:SS" portion
+
+            # ── 3. 16-byte random plaintext + fresh IV ────────────────────
+            plain = secrets.token_bytes(16)
+            iv    = secrets.token_bytes(16)
+
+            # ── 4. AES-256-CBC encrypt ────────────────────────────────────
+            cipher_bytes = aes_cbc_encrypt(aes_key, iv, plain)
+
+            # ── 5. SHA-256(AES_key ‖ IST_datetime_str)  →  entropy_hash ──
+            hash_bytes = compute_hash_pro(aes_key, ist_datetime)
             hash_hex   = hash_bytes.hex()
 
-            # ── 4. Sign ─────────────────────────────────────────────────
-            sig_raw  = ecdsa_sign_raw(key, hash_bytes)
-            sig_hex  = sig_raw.hex()
+            # ── 6. ECDSA sign (ECDSA/SHA-256 to match Node verifier) ──────
+            sig_raw = ecdsa_sign_raw(ecdsa_key, hash_bytes)
+            sig_hex = sig_raw.hex()
 
-            # ── 5. RTC time (use system clock as stand-in) ───────────────
-            rtc_time = datetime.now(timezone.utc).strftime('%H:%M:%S')
-
-            # ── 6. Payload ───────────────────────────────────────────────
+            # ── 7. Build payload ──────────────────────────────────────────
             payload: dict = {
-                'device_id':    DEVICE_ID,
-                'timestamp':    timestamp,
-                'entropy_hash': hash_hex,
-                'signature':    sig_hex,
-                'rtc_time':     rtc_time,
+                'device_id':      DEVICE_ID,
+                'timestamp':      timestamp,
+                'entropy_hash':   hash_hex,
+                'signature':      sig_hex,
+                'rtc_time':       rtc_time,
+                'aes_ciphertext': cipher_bytes.hex(),
+                'aes_iv':         iv.hex(),
             }
             if not pubkey_sent:
                 payload['public_key'] = pubkey_hex
 
-            # ── 7. POST to backend ────────────────────────────────────────
+            # ── 8. Serial-monitor style pretty-print ──────────────────────
+            log.info("╔══ ENIGMA Entropy Emission ══╗")
+            log.info("  IST DateTime : %s", ist_datetime)
+            log.info("  RTC (IST)    : %s", rtc_time)
+            log.info("  UNIX Epoch   : %d", timestamp)
+            log.info("  AES IV       : %s", iv.hex())
+            log.info("  AES Cipher   : %s", cipher_bytes.hex())
+            log.info("  SHA-256 Hash : %s…", hash_hex[:32])
+            log.info("  ECDSA Sig    : %s…", sig_hex[:32])
+
+            # ── 9. POST to backend ────────────────────────────────────────
             resp = requests.post(
-                ENTROPY_ENDPOINT, json=payload, timeout=HTTP_TIMEOUT_S
+                ENTROPY_ENDPOINT, json=payload, timeout=HTTP_TIMEOUT_S,
             )
 
             if resp.status_code == 201:
                 record_id = resp.json().get('data', {}).get('id', '?')
                 log.info(
-                    "✓  id=%-4s  hash=%.16s…  ts=%d  rtc=%s",
-                    record_id, hash_hex, timestamp, rtc_time,
+                    "✓  id=%-4s  hash=%.16s…  rtc=%s  [Accepted – blockchain anchor queued]",
+                    record_id, hash_hex, rtc_time,
                 )
                 pubkey_sent = True
 
             elif resp.status_code == 409:
-                # Replay – can happen if clocks collide on rapid restart
                 log.warning("⚠  Replay detected (HTTP 409), skipping record")
 
             else:
-                log.warning(
-                    "✗  HTTP %d: %s",
-                    resp.status_code, resp.text[:300],
-                )
+                log.warning("✗  HTTP %d: %s", resp.status_code, resp.text[:300])
 
         except requests.exceptions.ConnectionError:
             log.warning("Connection refused – backend unreachable, will retry")
-            pubkey_sent = False  # re-send pubkey after reconnect
+            pubkey_sent = False   # re-send pubkey after reconnect
 
         except Exception as exc:  # noqa: BLE001
             log.error("Cycle error: %s", exc, exc_info=True)
 
-        # ── Sleep for remainder of interval ─────────────────────────────
+        # ── Sleep for remainder of interval ──────────────────────────────
         elapsed_ms = (time.monotonic() - cycle_start) * 1000.0
         sleep_s    = max(0.0, (INTERVAL_MS - elapsed_ms) / 1000.0)
         time.sleep(sleep_s)
