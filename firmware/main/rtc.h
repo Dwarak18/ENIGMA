@@ -2,11 +2,17 @@
 #define RTC_H
 
 #include <time.h>
+#include "esp_err.h"
 
 /**
  * Initialise I2C bus and DS3231. Run I2C scan. Clear CH (Clock Halt) bit.
+ *
+ * @return ESP_OK           – DS3231 found and ready.
+ *         ESP_ERR_NOT_FOUND – DS3231 not detected on I2C bus (check wiring /
+ *                             config.h I2C_RTC_SCL_GPIO / I2C_RTC_SDA_GPIO).
+ *         other             – I2C driver initialisation failed.
  */
-void external_rtc_init(void);
+esp_err_t external_rtc_init(void);
 
 /**
  * Read current time from DS3231 into time_str as "HH:MM:SS" (IST).

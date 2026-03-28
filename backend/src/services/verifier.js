@@ -90,10 +90,12 @@ function verifySignature(pubkeyHex, hashHex, signatureHex) {
     const derSig    = rawSigToDer(signatureHex);
     const hashBuf   = Buffer.from(hashHex, 'hex');
 
-    // Verify: algorithm=null because we pass pre-computed hash
+    // Node.js createVerify('SHA256') hashes hashBuf internally before the EC
+    // verify operation. The firmware's sign_hash() mirrors this by applying
+    // an extra SHA-256 pass before mbedtls_ecdsa_sign(), so all three sides
+    // (firmware, simulator, backend) agree on ECDSA-SHA-256 semantics.
     const verifier = crypto.createVerify('SHA256');
     verifier.update(hashBuf);
-
     return verifier.verify(publicKey, derSig);
   } catch (err) {
     logger.warn('verifySignature threw an error', { error: err.message });

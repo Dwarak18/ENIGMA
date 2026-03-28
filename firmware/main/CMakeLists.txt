@@ -6,6 +6,7 @@ idf_component_register(
         "network.c"
         "storage.c"
         "rtc.c"
+        "atecc608a.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash

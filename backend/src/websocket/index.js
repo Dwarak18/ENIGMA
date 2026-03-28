@@ -10,7 +10,7 @@ const pool       = require('../db/pool');
 const config     = require('../config');
 const logger     = require('../logger');
 const metrics    = require('../metrics');
-const { getDeviceStatuses } = require('../services/entropyService');
+const { getDeviceStatuses, getTRNGStatus } = require('../services/entropyService');
 
 const SERVICE_START = Date.now();
 

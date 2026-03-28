@@ -7,8 +7,8 @@
 #include <stdio.h>
 #include <time.h>
 
-#define I2C_MASTER_SCL_IO    17
-#define I2C_MASTER_SDA_IO    18
+#define I2C_MASTER_SCL_IO    I2C_RTC_SCL_GPIO   /* config.h */
+#define I2C_MASTER_SDA_IO    I2C_RTC_SDA_GPIO   /* config.h */
 #define I2C_MASTER_NUM       I2C_NUM_0
 #define I2C_MASTER_FREQ_HZ   100000
 
@@ -74,9 +74,15 @@ static esp_err_t ds3231_read_bytes(uint8_t reg, uint8_t *out, size_t len)
 }
 
 /* ── I2C bus scan (startup diagnostics) ─────────────────────────────── */
-static void i2c_scan(void)
+/**
+ * Scan I2C_NUM_0 for all 7-bit addresses and log any responders.
+ * Returns true if the DS3231 (0x68) was found.
+ */
+static bool i2c_scan(void)
 {
-    printf("Scanning I2C bus...\n");
+    bool ds3231_found = false;
+    ESP_LOGI(TAG, "Scanning I2C_NUM_0 (SCL=GPIO%d SDA=GPIO%d)…",
+             I2C_MASTER_SCL_IO, I2C_MASTER_SDA_IO);
     for (uint8_t addr = 1; addr < 127; addr++) {
         i2c_cmd_handle_t cmd = i2c_cmd_link_create();
         i2c_master_start(cmd);
@@ -85,17 +91,24 @@ static void i2c_scan(void)
         esp_err_t ret = i2c_master_cmd_begin(I2C_MASTER_NUM, cmd, pdMS_TO_TICKS(50));
         i2c_cmd_link_delete(cmd);
         if (ret == ESP_OK) {
-            printf("Found device at 0x%02X\n", addr);
+            ESP_LOGI(TAG, "  found device at 0x%02X%s", addr,
+                     addr == DS3231_ADDR ? "  ← DS3231" : "");
+            if (addr == DS3231_ADDR) ds3231_found = true;
         }
     }
-    printf("Scan done.\n");
+    if (!ds3231_found) {
+        ESP_LOGE(TAG, "DS3231 NOT found on I2C bus!"
+                 " Check wiring: SCL→GPIO%d, SDA→GPIO%d, VCC→3V3, GND",
+                 I2C_MASTER_SCL_IO, I2C_MASTER_SDA_IO);
+    }
+    return ds3231_found;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Public API                                                            */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-void external_rtc_init(void)
+esp_err_t external_rtc_init(void)
 {
     i2c_config_t conf = {
         .mode             = I2C_MODE_MASTER,
@@ -105,21 +118,43 @@ void external_rtc_init(void)
         .scl_pullup_en    = GPIO_PULLUP_ENABLE,
         .master.clk_speed = I2C_MASTER_FREQ_HZ,
     };
-    i2c_param_config(I2C_MASTER_NUM, &conf);
-    i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0);
+
+    esp_err_t ret = i2c_param_config(I2C_MASTER_NUM, &conf);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "i2c_param_config failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
+
+    ret = i2c_driver_install(I2C_MASTER_NUM, conf.mode, 0, 0, 0);
+    if (ret == ESP_ERR_INVALID_STATE) {
+        /* Driver was already installed – not a fatal error, continue. */
+        ESP_LOGW(TAG, "I2C driver already installed on I2C_NUM_0");
+    } else if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "i2c_driver_install failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
     /* Brief settle time after driver install */
     vTaskDelay(pdMS_TO_TICKS(10));
 
-    i2c_scan();
+    if (!i2c_scan()) {
+        /* DS3231 not found – return error so callers can skip RTC operations */
+        return ESP_ERR_NOT_FOUND;
+    }
 
     /* Clear the CH (Clock Halt) bit in register 0x00 to ensure oscillator runs.
      * We write 0x00 to seconds register which clears CH (bit7) and resets secs to 0.
      * The real time will be overwritten by rtc_set_time_from_epoch() immediately after. */
     uint8_t clr = 0x00;
-    ds3231_write_reg(0x00, &clr, 1);
+    ret = ds3231_write_reg(0x00, &clr, 1);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "DS3231 CH-bit clear failed: %s", esp_err_to_name(ret));
+        return ret;
+    }
 
-    ESP_LOGI(TAG, "DS3231 Initialized");
+    ESP_LOGI(TAG, "DS3231 initialised (SCL=GPIO%d SDA=GPIO%d)",
+             I2C_MASTER_SCL_IO, I2C_MASTER_SDA_IO);
+    return ESP_OK;
 }
 
 /**

@@ -165,16 +165,33 @@ esp_err_t sign_hash(const uint8_t hash[CRYPTO_HASH_LEN],
     if (!s_ctx.initialized) { ESP_LOGE(TAG, "crypto not initialized"); return ESP_FAIL; }
 
     int ret;
+
+    /* Apply SHA-256 once more so the signing operation is identical to
+     * ECDSA-SHA-256 as used by Node.js crypto.createVerify('SHA256') and
+     * Python cryptography ec.ECDSA(hashes.SHA256()).  Both libraries hash
+     * their input with SHA-256 before the raw EC operation; mbedTLS's
+     * mbedtls_ecdsa_sign() does NOT hash, so we do it explicitly here. */
+    uint8_t digest[CRYPTO_HASH_LEN];
+    {
+        mbedtls_sha256_context sha;
+        mbedtls_sha256_init(&sha);
+        ret  = mbedtls_sha256_starts(&sha, 0); /* 0 = SHA-256 */
+        ret |= mbedtls_sha256_update(&sha, hash, CRYPTO_HASH_LEN);
+        ret |= mbedtls_sha256_finish(&sha, digest);
+        mbedtls_sha256_free(&sha);
+        if (ret != 0) { log_mbedtls_error(ret, "sha256(sign)"); return ESP_FAIL; }
+    }
+
     mbedtls_mpi r, s;
     mbedtls_mpi_init(&r);
     mbedtls_mpi_init(&s);
 
-    /* Produce raw r, s integers */
+    /* Produce raw r, s integers over the double-hashed digest */
     ret = mbedtls_ecdsa_sign(
             &s_ctx.ecdsa.MBEDTLS_PRIVATE(grp),
             &r, &s,
             &s_ctx.ecdsa.MBEDTLS_PRIVATE(d),
-            hash, CRYPTO_HASH_LEN,
+            digest, CRYPTO_HASH_LEN,
             mbedtls_rng_wrap, &s_ctx.ctr_drbg);
     if (ret != 0) {
         log_mbedtls_error(ret, "ecdsa_sign");

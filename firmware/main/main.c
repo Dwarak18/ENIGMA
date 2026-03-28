@@ -30,9 +30,29 @@
 
 #include <string.h>
 #include <time.h>
+#include <stdlib.h>
 #include <inttypes.h>
 
 static const char *TAG = "main";
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  IST time-print task (every 1 s, runs after Wi-Fi is off)             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+static void time_print_task(void *pvParam)
+{
+    (void)pvParam;
+    for (;;) {
+        time_t now;
+        struct tm local;
+        time(&now);
+        localtime_r(&now, &local);
+        printf("IST TIME  %02d:%02d:%02d  %02d-%02d-%04d\n",
+               local.tm_hour, local.tm_min, local.tm_sec,
+               local.tm_mday, local.tm_mon + 1, local.tm_year + 1900);
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Entropy loop task                                                     */
@@ -135,26 +155,73 @@ void app_main(void)
     /* ── 1. NVS ────────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(storage_init());
 
-    /* ── 2. Network ─────────────────────────────────────────────────── */
+    /* ── 2. DS3231 External RTC (init before SNTP to capture pre-sync time) */
+    external_rtc_init();
+
+    /* ── PRE-SYNC snapshot ──────────────────────────────────────────── */
+    {
+        char pre_rtc[20];
+        rtc_get_time(pre_rtc);
+        time_t pre_sys = 0;
+        time(&pre_sys);
+        struct tm pre_tm;
+        gmtime_r(&pre_sys, &pre_tm);
+        ESP_LOGI(TAG, "==========  PRE-SYNC  ==========");
+        ESP_LOGI(TAG, "  DS3231 time : %s (IST as stored on chip)", pre_rtc);
+        ESP_LOGI(TAG, "  NTP/system  : UTC epoch=%lld  (%04d-%02d-%02d %02d:%02d:%02d UTC)",
+                 (long long)pre_sys,
+                 pre_tm.tm_year + 1900, pre_tm.tm_mon + 1, pre_tm.tm_mday,
+                 pre_tm.tm_hour, pre_tm.tm_min, pre_tm.tm_sec);
+    }
+
+    /* ── 3. Network + SNTP ──────────────────────────────────────────── */
     ESP_ERROR_CHECK(network_wifi_connect());
     ESP_ERROR_CHECK(network_sntp_sync());
 
-    /* ── 3. DS3231 External RTC ─────────────────────────────────────── */
-    external_rtc_init();
-
-    /* Push the SNTP-synced UTC time into the DS3231 as IST (UTC+5:30).
-     * After this call the chip keeps ticking in IST independently.      */
+    /* ── POST-SYNC snapshot (NTP) ───────────────────────────────────── */
+    time_t utc_now = 0;
+    time(&utc_now);
     {
-        time_t utc_now = 0;
-        time(&utc_now);
-        ESP_LOGI(TAG, "Writing SNTP time (UTC %lld) to DS3231 as IST...", (long long)utc_now);
-        rtc_set_time_from_epoch(utc_now);
+        time_t ist_now = utc_now + IST_OFFSET_SECS;
+        struct tm post_tm;
+        gmtime_r(&ist_now, &post_tm);
+        ESP_LOGI(TAG, "==========  POST-SYNC (NTP)  ==========");
+        ESP_LOGI(TAG, "  NTP/system  : UTC epoch=%lld  IST=%04d-%02d-%02d %02d:%02d:%02d",
+                 (long long)utc_now,
+                 post_tm.tm_year + 1900, post_tm.tm_mon + 1, post_tm.tm_mday,
+                 post_tm.tm_hour, post_tm.tm_min, post_tm.tm_sec);
     }
 
-    /* ── 4. Crypto ──────────────────────────────────────────────────── */
+    /* Push SNTP-synced UTC time into the DS3231 as IST (UTC+5:30).
+     * After this call the chip keeps ticking in IST independently.      */
+    ESP_LOGI(TAG, "  Writing NTP time to DS3231 as IST...");
+    rtc_set_time_from_epoch(utc_now);
+
+    /* ── POST-SYNC snapshot (DS3231 after write) ────────────────────── */
+    {
+        char post_rtc[20];
+        rtc_get_time(post_rtc);
+        ESP_LOGI(TAG, "==========  POST-SYNC (DS3231 after write)  ==========");
+        ESP_LOGI(TAG, "  DS3231 time : %s (IST just written)", post_rtc);
+    }
+
+    /* ── 5. Turn Wi-Fi OFF (no longer needed after SNTP + DS3231 write) */
+    network_wifi_disconnect();
+
+    /* ── 6. Set IST timezone so localtime_r returns IST ─────────────── */
+    setenv("TZ", "IST-5:30", 1);
+    tzset();
+    ESP_LOGI(TAG, "Timezone set to IST (UTC+5:30)");
+
+    /* ── 7. Crypto ──────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(crypto_init());
 
-    /* ── 5. Start entropy loop ──────────────────────────────────────── */
+    /* ── 8. Start tasks ─────────────────────────────────────────────── */
+    /* Print IST time every second */
+    xTaskCreate(time_print_task, "time_print",
+                2048, NULL, 4, NULL);
+
+    /* Entropy collection + signing + HTTP POST */
     xTaskCreate(entropy_task, "entropy_task",
                 MAIN_TASK_STACK, NULL, 5, NULL);
 

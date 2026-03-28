@@ -208,3 +208,16 @@ esp_err_t network_post_entropy(uint64_t    timestamp,
     ESP_LOGI(TAG, "Payload sent, HTTP %d", status);
     return ESP_OK;
 }
+
+/* ── network_wifi_disconnect ─────────────────────────────────────────── */
+
+esp_err_t network_wifi_disconnect(void)
+{
+    esp_err_t ret = esp_wifi_stop();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_wifi_stop failed: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "Wi-Fi stopped");
+    }
+    return ret;
+}

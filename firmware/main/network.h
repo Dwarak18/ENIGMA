@@ -14,6 +14,12 @@
 esp_err_t network_wifi_connect(void);
 
 /**
+ * @brief Stop the Wi-Fi radio (call after SNTP sync + DS3231 update).
+ * @return ESP_OK on success.
+ */
+esp_err_t network_wifi_disconnect(void);
+
+/**
  * @brief Synchronise device clock via SNTP (blocking).
  * @return ESP_OK when time is synchronized.
  */

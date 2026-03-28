@@ -39,12 +39,13 @@
 #include "crypto.h"
 #include "storage.h"
 #include "network.h"
+#include "atecc608a.h"
 
 static const char *TAG = "enigma_pro";
 
 /* ── AES key constants ─────────────────────────────────────────────── */
 #define AES_KEY_BYTES    32          /* AES-256 */
-#define AES_BLOCK_BYTES  16          /* CBC block / plaintext / IV size */
+/* AES_BLOCK_BYTES (16) is already defined by mbedtls/aes.h → hal/aes_types.h */
 #define NVS_KEY_AES      "aes_key"  /* NVS blob key for the AES key    */
 
 /* ── Module-level AES key (loaded once at boot) ─────────────────────── */
@@ -115,10 +116,26 @@ static esp_err_t aes_encrypt_block(const uint8_t *plain,
 
 /**
  * SHA-256( aes_key[32] ‖ datetime_str )  →  hash_out[32]
+ *
+ * Uses the ATECC608A hardware engine when the chip is present;
+ * falls back to mbedTLS software SHA-256 otherwise.
  */
 static esp_err_t sha256_key_datetime(const char *datetime_str,
                                      uint8_t     hash_out[CRYPTO_HASH_LEN])
 {
+    /* ── Try ATECC608A hardware engine first ── */
+    if (atecc608a_present()) {
+        size_t  dt_len = strlen(datetime_str);
+        uint8_t input[AES_KEY_BYTES + 32];   /* key(32) + datetime(≤19) */
+        memcpy(input, s_aes_key, AES_KEY_BYTES);
+        memcpy(input + AES_KEY_BYTES, datetime_str, dt_len);
+
+        esp_err_t hw = atecc608a_sha256(input, AES_KEY_BYTES + dt_len, hash_out);
+        if (hw == ESP_OK) return ESP_OK;
+        ESP_LOGW(TAG, "ATECC608A SHA-256 failed – falling back to mbedTLS");
+    }
+
+    /* ── Software fallback (mbedTLS) ── */
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
 
@@ -162,7 +179,7 @@ static void entropy_task(void *pvParam)
 
     /* Time strings */
     char rtc_time_str[20];        /* "HH:MM:SS"            from DS3231  */
-    char ist_datetime[32];        /* "YYYY-MM-DD HH:MM:SS" from epoch   */
+    char ist_datetime[64];        /* "YYYY-MM-DD HH:MM:SS" from epoch   */
 
     for (;;) {
         int64_t cycle_start = esp_timer_get_time();
@@ -292,18 +309,72 @@ void app_main(void)
     /* ── 1. NVS ──────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(storage_init());
 
-    /* ── 2. Wi-Fi + SNTP ─────────────────────────────────────────── */
+    /* ── 2. DS3231 + ATECC608A – hardware check before Wi-Fi ─────── */
+    /* Run both I2C peripherals early so the serial monitor shows     */
+    /* the connection result immediately, independent of Wi-Fi.       */
+    bool rtc_ok = (external_rtc_init() == ESP_OK);
+
+    /* ATECC608A on I2C_NUM_1 (SDA=GPIO3, SCL=GPIO7) – non-fatal */
+    atecc608a_init();
+
+    /* ── PRE-SYNC snapshot ───────────────────────────────────────── */
+    {
+        char pre_rtc[20];
+        rtc_get_time(pre_rtc);          /* "00:00:00" if DS3231 absent */
+        time_t pre_sys = 0;
+        time(&pre_sys);
+        struct tm pre_tm;
+        gmtime_r(&pre_sys, &pre_tm);
+        printf("\n╔══════════════════════════════════════════════════════════════╗\n");
+        printf("║                   PRE-SYNC TIME STATE                       ║\n");
+        printf("╠══════════════════════════════════════════════════════════════╣\n");
+        printf("  DS3231 time  : %s (IST as stored on chip)%s\n",
+               pre_rtc, rtc_ok ? "" : "  [DS3231 offline – showing 00:00:00]");
+        printf("  NTP/system   : UTC epoch=%" PRId64 "  (%04d-%02d-%02d %02d:%02d:%02d UTC)\n",
+               (int64_t)pre_sys,
+               pre_tm.tm_year + 1900, pre_tm.tm_mon + 1, pre_tm.tm_mday,
+               pre_tm.tm_hour, pre_tm.tm_min, pre_tm.tm_sec);
+        printf("╚══════════════════════════════════════════════════════════════╝\n\n");
+    }
+
+    /* ── 3. Wi-Fi + SNTP ─────────────────────────────────────────── */
     ESP_ERROR_CHECK(network_wifi_connect());
     ESP_ERROR_CHECK(network_sntp_sync());   /* logs full IST date-time */
 
-    /* ── 3. DS3231 – I2C init + set IST from SNTP ────────────────── */
-    external_rtc_init();
+    /* ── POST-SYNC snapshot (NTP) ───────────────────────────────── */
+    time_t utc_now = 0;
+    time(&utc_now);
     {
-        time_t utc_now = 0;
-        time(&utc_now);
+        time_t ist_now = utc_now + IST_OFFSET_SECS;
+        struct tm post_tm;
+        gmtime_r(&ist_now, &post_tm);
+        printf("\n╔══════════════════════════════════════════════════════════════╗\n");
+        printf("║               POST-SYNC TIME STATE (NTP)                    ║\n");
+        printf("╠══════════════════════════════════════════════════════════════╣\n");
+        printf("  NTP/system   : UTC epoch=%" PRId64 "  IST=%04d-%02d-%02d %02d:%02d:%02d\n",
+               (int64_t)utc_now,
+               post_tm.tm_year + 1900, post_tm.tm_mon + 1, post_tm.tm_mday,
+               post_tm.tm_hour, post_tm.tm_min, post_tm.tm_sec);
+        printf("  DS3231 time  : (will be written next…)\n");
+        printf("╚══════════════════════════════════════════════════════════════╝\n\n");
+    }
+
+    /* ── 3b. Sync DS3231 to IST from SNTP ───────────────────────── */
+    if (rtc_ok) {
         printf("  [RTC] Writing IST to DS3231 (UTC %" PRId64 " + 5h30m)…\n",
                (int64_t)utc_now);
         rtc_set_time_from_epoch(utc_now);
+
+        /* ── POST-SYNC snapshot (DS3231 after write) ─────────────── */
+        char post_rtc[20];
+        rtc_get_time(post_rtc);
+        printf("\n╔══════════════════════════════════════════════════════════════╗\n");
+        printf("║           POST-SYNC TIME STATE (DS3231 after write)         ║\n");
+        printf("╠══════════════════════════════════════════════════════════════╣\n");
+        printf("  DS3231 time  : %s (IST just written from NTP)\n", post_rtc);
+        printf("╚══════════════════════════════════════════════════════════════╝\n\n");
+    } else {
+        ESP_LOGW("enigma_pro", "DS3231 unavailable – skipping RTC sync (SNTP time still valid)");
     }
 
     /* ── 4. AES-256 key – load from NVS or generate ─────────────── */
@@ -313,175 +384,6 @@ void app_main(void)
     ESP_ERROR_CHECK(crypto_init());
 
     /* ── 6. Start entropy loop ───────────────────────────────────── */
-    printf("\n  ENIGMA operational – emitting every %d s\n\n",
-           ENTROPY_INTERVAL_MS / 1000);
-
-    xTaskCreate(entropy_task, "entropy_task", MAIN_TASK_STACK, NULL, 5, NULL);
-}
-
-#include <stdio.h>
-#include <string.h>
-#include <time.h>
-#include <inttypes.h>
-
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "nvs_flash.h"
-#include "esp_log.h"
-#include "esp_timer.h"
-
-#include "config.h"
-#include "rtc.h"
-#include "entropy.h"
-#include "crypto.h"
-#include "storage.h"
-#include "network.h"
-
-static const char *TAG = "enigma_pro";
-
-/* ══════════════════════════════════════════════════════════════════════ */
-/*  Entropy loop                                                          */
-/* ══════════════════════════════════════════════════════════════════════ */
-
-static void entropy_task(void *pvParam)
-{
-    (void)pvParam;
-
-    bool pubkey_sent = false;
-
-    /* Raw byte buffers */
-    uint8_t entropy_raw[ENTROPY_BYTES];
-    uint8_t hash_raw   [CRYPTO_HASH_LEN];
-    uint8_t sig_raw    [CRYPTO_SIG_LEN];
-    uint8_t pub_raw    [CRYPTO_PUBKEY_LEN];
-
-    /* Hex string buffers */
-    char hash_hex[CRYPTO_HASH_LEN    * 2 + 1];
-    char sig_hex [CRYPTO_SIG_LEN     * 2 + 1];
-    char pub_hex [CRYPTO_PUBKEY_LEN  * 2 + 1];
-
-    /* RTC time */
-    char rtc_time_str[20];
-
-    for (;;) {
-        int64_t cycle_start = esp_timer_get_time();
-
-        /* ── 1. Entropy ────────────────────────────────────────────── */
-        entropy_collect(entropy_raw, ENTROPY_BYTES);
-
-        /* ── 2. DS3231 IST time ────────────────────────────────────── */
-        rtc_get_time(rtc_time_str);
-
-        /* ── 3. SNTP timestamp (UTC epoch) ────────────────────────── */
-        time_t now = 0;
-        time(&now);
-        uint64_t timestamp = (uint64_t)now;
-
-        if (timestamp < 1700000000ULL) {
-            ESP_LOGW(TAG, "Clock not synced yet, skipping cycle");
-            vTaskDelay(pdMS_TO_TICKS(ENTROPY_INTERVAL_MS));
-            continue;
-        }
-
-        /* ── 4. SHA-256 hash ───────────────────────────────────────── */
-        if (crypto_hash(entropy_raw, ENTROPY_BYTES, timestamp, hash_raw) != ESP_OK) {
-            ESP_LOGE(TAG, "Hash failed");
-            goto sleep;
-        }
-        crypto_bytes_to_hex(hash_raw, CRYPTO_HASH_LEN, hash_hex);
-
-        /* ── 5. ECDSA signature ────────────────────────────────────── */
-        if (sign_hash(hash_raw, sig_raw) != ESP_OK) {
-            ESP_LOGE(TAG, "Sign failed");
-            goto sleep;
-        }
-        crypto_bytes_to_hex(sig_raw, CRYPTO_SIG_LEN, sig_hex);
-
-        /* ── 6. Public key (first cycle only) ─────────────────────── */
-        const char *pubkey_arg = NULL;
-        if (!pubkey_sent) {
-            if (crypto_get_pubkey(pub_raw) == ESP_OK) {
-                crypto_bytes_to_hex(pub_raw, CRYPTO_PUBKEY_LEN, pub_hex);
-                pubkey_arg = pub_hex;
-            }
-        }
-
-        /* ── 7. Pretty console output ─────────────────────────────── */
-        printf("\n╔══════════════════════════════════════════════════════════╗\n");
-        printf("║               ENIGMA – Entropy Emission                 ║\n");
-        printf("╠══════════════════════════════════════════════════════════╣\n");
-        printf("  Device ID  : %s\n",            DEVICE_ID);
-        printf("  IST Time   : %s\n",            rtc_time_str);
-        printf("  Timestamp  : %" PRIu64 "\n",  timestamp);
-        printf("  Hash       : %.32s\n"
-               "               %.32s\n",         hash_hex, hash_hex + 32);
-        printf("  Signature  : %.32s\n"
-               "               %.32s\n"
-               "               %.32s\n"
-               "               %.32s\n",
-               sig_hex,      sig_hex + 32,
-               sig_hex + 64, sig_hex + 96);
-        if (pubkey_arg) {
-            printf("  Public Key : %.32s\n"
-                   "               %.32s\n"
-                   "               %.32s\n"
-                   "               %.38s\n",
-                   pub_hex,      pub_hex + 32,
-                   pub_hex + 64, pub_hex + 96);
-        }
-        printf("╚══════════════════════════════════════════════════════════╝\n");
-
-        /* ── 8. POST to backend ────────────────────────────────────── */
-        esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex,
-                                             pubkey_arg, rtc_time_str);
-        if (err == ESP_OK) {
-            printf("  [POST] Backend accepted  ✓\n\n");
-            pubkey_sent = true;
-        } else {
-            printf("  [POST] Failed – will retry next cycle\n\n");
-        }
-
-sleep:
-        /* ── Sleep for remainder of interval ──────────────────────── */
-        int64_t elapsed_us = esp_timer_get_time() - cycle_start;
-        int64_t sleep_us   = (int64_t)ENTROPY_INTERVAL_MS * 1000LL - elapsed_us;
-        if (sleep_us > 0) {
-            vTaskDelay(pdMS_TO_TICKS(sleep_us / 1000));
-        }
-    }
-}
-
-/* ══════════════════════════════════════════════════════════════════════ */
-/*  app_main                                                              */
-/* ══════════════════════════════════════════════════════════════════════ */
-
-void app_main(void)
-{
-    printf("\n╔══════════════════════════════════════════════════════════╗\n");
-    printf("║           ENIGMA Pro – Firmware Booting                 ║\n");
-    printf("╚══════════════════════════════════════════════════════════╝\n\n");
-
-    /* ── 1. NVS ─────────────────────────────────────────────────── */
-    ESP_ERROR_CHECK(storage_init());
-
-    /* ── 2. Wi-Fi + SNTP ────────────────────────────────────────── */
-    ESP_ERROR_CHECK(network_wifi_connect());
-    ESP_ERROR_CHECK(network_sntp_sync());   /* logs IST date-time after sync */
-
-    /* ── 3. DS3231 – initialise I2C, then push IST from SNTP ────── */
-    external_rtc_init();
-    {
-        time_t utc_now = 0;
-        time(&utc_now);
-        printf("  [RTC] Setting DS3231 to IST (UTC %" PRId64 " + 5h30m)…\n",
-               (int64_t)utc_now);
-        rtc_set_time_from_epoch(utc_now);   /* converts to IST inside rtc.c */
-    }
-
-    /* ── 4. Crypto – load or generate ECDSA keypair ─────────────── */
-    ESP_ERROR_CHECK(crypto_init());
-
-    /* ── 5. Launch entropy loop ──────────────────────────────────── */
     printf("\n  ENIGMA operational – emitting every %d s\n\n",
            ENTROPY_INTERVAL_MS / 1000);
 

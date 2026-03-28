@@ -156,7 +156,8 @@ def ecdsa_sign_raw(key: ec.EllipticCurvePrivateKey, hash_bytes: bytes) -> bytes:
     which applies SHA-256 to hashBuf internally before the ECDSA check.
     We use ec.ECDSA(hashes.SHA256()) so the library hashes hash_bytes with
     SHA-256 before signing — producing a signature that the Node verifier
-    accepts.
+    accepts.  The ESP32 firmware mirrors this by applying an extra SHA-256
+    pass inside sign_hash() before calling mbedtls_ecdsa_sign().
 
     Returns: raw 64-byte signature (r || s, each 32 bytes big-endian)
     """
