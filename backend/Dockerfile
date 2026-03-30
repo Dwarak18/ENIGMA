@@ -1,30 +1,42 @@
-# ── ENIGMA Backend – Node.js ─────────────────────────────────────────────
-FROM node:20-alpine
+# ══════════════════════════════════════════════════════════════════════════
+# ENIGMA Backend – Python FastAPI
+# ══════════════════════════════════════════════════════════════════════════
 
-LABEL org.opencontainers.image.title="enigma-backend"
-LABEL org.opencontainers.image.description="ENIGMA entropy verification backend"
+FROM python:3.11-slim
 
-# Install dumb-init for proper PID 1 signal handling
-RUN apk add --no-cache dumb-init
+LABEL org.opencontainers.image.title="enigma-backend" \
+      org.opencontainers.image.description="ENIGMA entropy verification and AES encryption backend with FastAPI"
+
+# Install system dependencies (for OpenCV and psycopg2)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libpq-dev \
+    libopencv-dev \
+    python3-opencv \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install production dependencies first (cache layer)
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Install Python dependencies
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application source
-COPY src/ ./src/
+COPY app ./app
 
 # Non-root user for security
-RUN addgroup -S enigma && adduser -S enigma -G enigma
+RUN useradd -m -u 1000 enigma && chown -R enigma:enigma /app
 USER enigma
 
-EXPOSE 3000
+EXPOSE 8000
 
-# Healthcheck: ping the /health endpoint
+# Healthcheck
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
-    CMD wget -qO- http://127.0.0.1:3000/health || exit 1
+    CMD python -c "import httpx; httpx.get('http://127.0.0.1:8000/health').raise_for_status()" || exit 1
 
-ENTRYPOINT ["dumb-init", "--"]
-CMD ["node", "src/index.js"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

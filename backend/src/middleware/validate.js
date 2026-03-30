@@ -66,6 +66,25 @@ const entropySubmitRules = [
     .isLength({ min: 32, max: 32 })
     .withMessage('aes_iv must be a 32-character hex string (16-byte AES IV)'),
 
+  /* Image bitstream fields (optional) */
+  body('image_encrypted')
+    .optional()
+    .isHexadecimal()
+    .isLength({ min: 16, max: 64 })
+    .withMessage('image_encrypted must be a 16-64 character hex string (AES encrypted image bits)'),
+
+  body('image_iv')
+    .optional()
+    .isHexadecimal()
+    .isLength({ min: 32, max: 32 })
+    .withMessage('image_iv must be a 32-character hex string (16-byte AES IV)'),
+
+  body('image_hash')
+    .optional()
+    .isHexadecimal()
+    .isLength({ min: 64, max: 64 })
+    .withMessage('image_hash must be a 64-character hex string (SHA-256)'),
+
   handleValidationErrors,
 ];
 

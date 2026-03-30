@@ -19,6 +19,22 @@ export default function EntropyPage({ entropyScore, latestRecord, currentFrame }
         { label: 'DEVICE ID',              value: null },
       ];
 
+  const encryptedFields = latestRecord
+    ? [
+        { label: 'AES CIPHERTEXT',              value: latestRecord.aes_ciphertext },
+        { label: 'AES IV',                      value: latestRecord.aes_iv },
+        { label: 'IMAGE BITSTREAM (ENCRYPTED)', value: latestRecord.image_encrypted },
+        { label: 'IMAGE IV',                    value: latestRecord.image_iv },
+        { label: 'IMAGE HASH (SHA-256)',        value: latestRecord.image_hash },
+      ]
+    : [
+        { label: 'AES CIPHERTEXT',              value: null },
+        { label: 'AES IV',                      value: null },
+        { label: 'IMAGE BITSTREAM (ENCRYPTED)', value: null },
+        { label: 'IMAGE IV',                    value: null },
+        { label: 'IMAGE HASH (SHA-256)',        value: null },
+      ];
+
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-3 gap-6">
@@ -79,6 +95,21 @@ export default function EntropyPage({ entropyScore, latestRecord, currentFrame }
               <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>{label}</div>
               <code style={{ fontSize: '12px', color: value ? '#10b981' : '#52525b', wordBreak: 'break-all' }}>
                 {value ? formatHash(value, 16) : '— awaiting data —'}
+              </code>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Encrypted payload values */}
+      <div className="card">
+        <h2 style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '16px' }}>ENCRYPTED PAYLOAD</h2>
+        <div className="space-y-3">
+          {encryptedFields.map(({ label, value }) => (
+            <div key={label} style={{ background: '#09090b', border: '1px solid #27272a', padding: '12px', borderRadius: '2px' }}>
+              <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px' }}>{label}</div>
+              <code style={{ fontSize: '12px', color: value ? '#fbbf24' : '#52525b', wordBreak: 'break-all' }}>
+                {value || '— not available in current record —'}
               </code>
             </div>
           ))}

@@ -3,7 +3,7 @@
 #
 # Services:
 #   postgres   PostgreSQL 15 (persistent volume)
-#   backend    Node.js 20 Express + Socket.IO API
+#   backend    FastAPI + Python (image processing, crypto, entropy)
 #   frontend   React/Vite built → served by Nginx (also reverse-proxies API)
 #
 # Usage:
@@ -35,7 +35,7 @@ services:
     networks:
       - enigma_net
 
-  # ── Backend (Node.js / Express / Socket.IO) ───────────────────────────
+  # ── Backend (FastAPI + Python + OpenCV) ────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -43,17 +43,18 @@ services:
     restart: unless-stopped
     env_file: ./backend/.env
     environment:
-      # Override DB host to reach the postgres service by name
+      # Database connection
       DATABASE_URL: postgresql://enigma:changeme@postgres:5432/enigma_db
-      NODE_ENV:     production
-      PORT:         "3000"
-      # Allow requests from the Nginx frontend container (same origin via proxy)
-      CORS_ORIGINS: http://localhost,http://localhost:80
+      # Server seed for key derivation
+      SERVER_RANDOM_SEED: ${SERVER_RANDOM_SEED:-default-server-seed-change-me}
+      DEBUG: "False"
+    expose:
+      - "8000"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -69,6 +70,9 @@ services:
     restart: unless-stopped
     ports:
       - "80:80"
+    environment:
+      # Tell Nginx to reverse-proxy API requests to FastAPI backend
+      VITE_API_URL: http://backend:8000
     depends_on:
       backend:
         condition: service_healthy
@@ -96,7 +100,7 @@ services:
       - /dev:/dev             # expose host USB/serial device nodes
       - /run/udev:/run/udev:ro  # udev event socket (Linux; skipped on Windows)
     environment:
-      BACKEND_URL:           http://backend:3000
+      BACKEND_URL:           http://backend:8000
       DEVICE_ID:             esp32-001
       BAUD_RATE:             "115200"
       SETTLE_S:              "1.5"
@@ -114,7 +118,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      BACKEND_URL:          http://backend:3000
+      BACKEND_URL:          http://backend:8000
       DEVICE_ID:            esp32-001-sim
       ENTROPY_INTERVAL_MS:  "10000"
       HTTP_TIMEOUT_S:       "10"

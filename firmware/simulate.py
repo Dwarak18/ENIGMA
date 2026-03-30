@@ -15,6 +15,7 @@ Reproduces exactly what the ESP32 Enigma_pro.c firmware does on every cycle:
   7.  POST JSON payload to /api/v1/entropy with:
         device_id, timestamp, entropy_hash, signature,
         rtc_time (HH:MM:SS IST), aes_ciphertext, aes_iv,
+        image_encrypted, image_iv, image_hash,
         public_key (first cycle only)
   8.  Sleep for ENTROPY_INTERVAL_MS, repeat
 
@@ -26,6 +27,7 @@ Environment variables (all have defaults):
   DEVICE_ID            esp32-001-sim
   ENTROPY_INTERVAL_MS  10000
   HTTP_TIMEOUT_S       10
+  IMAGE_BITSTREAM_BITS 128  (64 or 128)
 """
 
 import os
@@ -55,6 +57,7 @@ BACKEND_URL       = os.environ.get('BACKEND_URL',              'http://backend:3
 DEVICE_ID         = os.environ.get('DEVICE_ID',                'esp32-001-sim')
 INTERVAL_MS       = int(os.environ.get('ENTROPY_INTERVAL_MS',  '10000'))
 HTTP_TIMEOUT_S    = int(os.environ.get('HTTP_TIMEOUT_S',        '10'))
+IMAGE_BITSTREAM_BITS = int(os.environ.get('IMAGE_BITSTREAM_BITS', '128'))
 
 ECDSA_KEY_FILE    = '/tmp/enigma_sim_key.pem'
 AES_KEY_FILE      = '/tmp/enigma_sim_aes_key.bin'
@@ -68,6 +71,10 @@ DEVICE_STATUS_ENDPOINT = f"{BACKEND_URL}/api/v1/system/device-status"
 # ── Retry on startup ────────────────────────────────────────────────────────
 STARTUP_RETRY_S   = 5
 STARTUP_TIMEOUT_S = 120
+
+if IMAGE_BITSTREAM_BITS not in (64, 128):
+    log.warning("Invalid IMAGE_BITSTREAM_BITS=%s; defaulting to 128", IMAGE_BITSTREAM_BITS)
+    IMAGE_BITSTREAM_BITS = 128
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -129,6 +136,25 @@ def aes_cbc_encrypt(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
     cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
     enc = cipher.encryptor()
     return enc.update(plaintext) + enc.finalize()
+
+
+def pkcs7_pad(data: bytes, block_size: int = 16) -> bytes:
+    """Apply PKCS#7 padding."""
+    pad_len = block_size - (len(data) % block_size)
+    return data + bytes([pad_len] * pad_len)
+
+
+def aes_cbc_encrypt_pkcs7(key: bytes, iv: bytes, plaintext: bytes) -> bytes:
+    """AES-256-CBC encrypt arbitrary-length plaintext with PKCS#7 padding."""
+    padded = pkcs7_pad(plaintext, 16)
+    cipher = Cipher(algorithms.AES(key), modes.CBC(iv))
+    enc = cipher.encryptor()
+    return enc.update(padded) + enc.finalize()
+
+
+def simulate_image_bitstream(bits: int) -> bytes:
+    """Simulate camera-derived image bitstream bytes (64 or 128 bits)."""
+    return secrets.token_bytes(bits // 8)
 
 
 def ist_datetime_str(utc_epoch: int) -> str:
@@ -220,6 +246,7 @@ def main() -> None:
     log.info("  device    : %s", DEVICE_ID)
     log.info("  endpoint  : %s", ENTROPY_ENDPOINT)
     log.info("  interval  : %d ms", INTERVAL_MS)
+    log.info("  image bits: %d", IMAGE_BITSTREAM_BITS)
     log.info("  pipeline  : AES-256-CBC → SHA-256(key‖datetime) → ECDSA")
 
     wait_for_backend()
@@ -273,6 +300,12 @@ def main() -> None:
                 sig_raw = ecdsa_sign_raw(ecdsa_key, hash_bytes)
                 sig_hex = sig_raw.hex()
 
+                # Simulated camera bitstream fields
+                image_bits = simulate_image_bitstream(IMAGE_BITSTREAM_BITS)
+                image_hash = hashlib.sha256(image_bits).digest()
+                image_iv = secrets.token_bytes(16)
+                image_encrypted = aes_cbc_encrypt_pkcs7(hash_bytes, image_iv, image_bits)
+
                 # ── 7. Build payload ──────────────────────────────────────────
                 payload: dict = {
                     'device_id':      DEVICE_ID,
@@ -282,6 +315,9 @@ def main() -> None:
                     'rtc_time':       rtc_time,
                     'aes_ciphertext': cipher_bytes.hex(),
                     'aes_iv':         iv.hex(),
+                    'image_encrypted': image_encrypted.hex(),
+                    'image_iv':        image_iv.hex(),
+                    'image_hash':      image_hash.hex(),
                 }
                 if not pubkey_sent:
                     payload['public_key'] = pubkey_hex
@@ -293,6 +329,9 @@ def main() -> None:
                 log.info("  UNIX Epoch   : %d", timestamp)
                 log.info("  AES IV       : %s", iv.hex())
                 log.info("  AES Cipher   : %s", cipher_bytes.hex())
+                log.info("  Image Enc    : %s...", image_encrypted.hex()[:32])
+                log.info("  Image IV     : %s", image_iv.hex())
+                log.info("  Image Hash   : %s...", image_hash.hex()[:32])
                 log.info("  SHA-256 Hash : %s…", hash_hex[:32])
                 log.info("  ECDSA Sig    : %s…", sig_hex[:32])
 

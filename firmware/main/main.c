@@ -22,6 +22,11 @@
 #include "network.h"
 #include "rtc.h"
 
+#if CAMERA_ENABLED
+#include "camera.h"
+#include "aes_encryption.h"
+#endif
+
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -78,6 +83,21 @@ static void entropy_task(void *pvParam)
     /* DS3231 RTC time string "HH:MM:SS" */
     char rtc_time_str[20];
 
+#if CAMERA_ENABLED
+    /* Camera bitstream buffers */
+    uint8_t image_bits[16];      /* 128 bits = 16 bytes */
+    uint8_t image_encrypted[32]; /* AES ciphertext (max 32 bytes) */
+    uint8_t image_iv[16];        /* AES IV */
+    uint8_t image_hash[32];      /* SHA-256 of original bits */
+    size_t  image_bits_len = 0;
+    size_t  image_encrypted_len = 0;
+    
+    char image_bits_hex[33];
+    char image_encrypted_hex[65];
+    char image_iv_hex[33];
+    char image_hash_hex[65];
+#endif
+
     for (;;) {
         int64_t cycle_start = esp_timer_get_time();
 
@@ -122,12 +142,46 @@ static void entropy_task(void *pvParam)
             }
         }
 
+#if CAMERA_ENABLED
+        /* ── 6. Camera: Capture image and extract bitstream ────────── */
+        if (camera_capture_bitstream(image_bits, &image_bits_len) == ESP_OK) {
+            crypto_bytes_to_hex(image_bits, image_bits_len, image_bits_hex);
+            
+            /* ── 7. Hash the bitstream ─────────────────────────────── */
+            if (camera_hash_bitstream(image_bits, image_bits_len, image_hash) == ESP_OK) {
+                crypto_bytes_to_hex(image_hash, 32, image_hash_hex);
+            }
+            
+            /* ── 8. Generate random IV ─────────────────────────────── */
+            aes_generate_iv(image_iv);
+            crypto_bytes_to_hex(image_iv, 16, image_iv_hex);
+            
+            /* ── 9. AES encrypt using entropy as key ───────────────── */
+            if (aes_encrypt_bitstream(image_bits, image_bits_len,
+                                      entropy_raw, ENTROPY_BYTES,
+                                      image_iv, image_encrypted,
+                                      &image_encrypted_len) == ESP_OK) {
+                crypto_bytes_to_hex(image_encrypted, image_encrypted_len, image_encrypted_hex);
+            }
+            
+            ESP_LOGI(TAG, "Image bitstream: %.*s... (len=%zu)", 
+                     16, image_bits_hex, image_bits_len);
+        }
+#endif
+
         ESP_LOGI(TAG, "hash=%.*s... ts=%" PRIu64 " rtc=%s", 16, hash_hex, timestamp, rtc_time_str);
 
-        /* ── 7. POST to backend ────────────────────────────────────── */
+        /* ── 10. POST to backend ───────────────────────────────────── */
+#if CAMERA_ENABLED
         esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex,
                                              pubkey_arg, rtc_time_str,
-                                             NULL, NULL);  /* no AES fields in legacy path */
+                                             image_bits_len > 0 ? image_encrypted_hex : NULL,
+                                             image_iv_hex);
+#else
+        esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex,
+                                             pubkey_arg, rtc_time_str,
+                                             NULL, NULL);
+#endif
         if (err == ESP_OK) {
             pubkey_sent = true;
         } else {
@@ -135,7 +189,7 @@ static void entropy_task(void *pvParam)
         }
 
 sleep:
-        /* ── 7. Sleep for remainder of interval ────────────────────── */
+        /* ── 11. Sleep for remainder of interval ───────────────────── */
         int64_t elapsed_us = esp_timer_get_time() - cycle_start;
         int64_t sleep_us   = (int64_t)ENTROPY_INTERVAL_MS * 1000LL - elapsed_us;
         if (sleep_us > 0) {
@@ -216,7 +270,18 @@ void app_main(void)
     /* ── 7. Crypto ──────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(crypto_init());
 
-    /* ── 8. Start tasks ─────────────────────────────────────────────── */
+#if CAMERA_ENABLED
+    /* ── 8. Camera ──────────────────────────────────────────────────── */
+    ESP_LOGI(TAG, "Initializing camera...");
+    esp_err_t cam_err = camera_init();
+    if (cam_err != ESP_OK) {
+        ESP_LOGW(TAG, "Camera init failed (continuing without camera)");
+    } else {
+        ESP_LOGI(TAG, "Camera initialized successfully");
+    }
+#endif
+
+    /* ── 9. Start tasks ─────────────────────────────────────────────── */
     /* Print IST time every second */
     xTaskCreate(time_print_task, "time_print",
                 2048, NULL, 4, NULL);

@@ -214,6 +214,9 @@ async function processEntropy(payload) {
     rtc_time,
     aes_ciphertext,
     aes_iv,
+    image_encrypted,
+    image_iv,
+    image_hash,
   } = payload;
 
   /* ── Timestamp freshness check ──────────────────────────────────── */
@@ -253,11 +256,12 @@ async function processEntropy(payload) {
   let record;
   try {
     const res = await pool.query(`
-      INSERT INTO entropy_records (device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, rtc_time)
-      VALUES ($1, $2, $3, $4, $5, $6, $7)
-      RETURNING id, device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, rtc_time, created_at
+      INSERT INTO entropy_records (device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, rtc_time, image_encrypted, image_iv, image_hash)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      RETURNING id, device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, rtc_time, image_encrypted, image_iv, image_hash, created_at
     `, [device_id, timestamp, entropy_hash, signature,
-        aes_ciphertext || null, aes_iv || null, rtc_time || null]);
+        aes_ciphertext || null, aes_iv || null, rtc_time || null,
+        image_encrypted || null, image_iv || null, image_hash || null]);
     record = res.rows[0];
   } catch (dbErr) {
     if (dbErr.code === '23505') {   /* unique_violation */
@@ -287,6 +291,9 @@ async function processEntropy(payload) {
       aes_ciphertext:  record.aes_ciphertext || null,
       aes_iv:          record.aes_iv         || null,
       rtc_time:        record.rtc_time        || null,
+      image_encrypted: record.image_encrypted || null,
+      image_iv:        record.image_iv        || null,
+      image_hash:      record.image_hash      || null,
       created_at:      record.created_at,
       verified:        true,
     });
@@ -306,7 +313,9 @@ async function processEntropy(payload) {
 async function getLatest(limit = 1) {
   const res = await pool.query(`
     SELECT id, device_id, timestamp, entropy_hash, signature,
-           aes_ciphertext, aes_iv, rtc_time, created_at
+           aes_ciphertext, aes_iv, rtc_time,
+           image_encrypted, image_iv, image_hash,
+           created_at
     FROM entropy_records
     ORDER BY created_at DESC
     LIMIT $1
@@ -320,7 +329,9 @@ async function getLatest(limit = 1) {
 async function getHistory(limit = 100) {
   const res = await pool.query(`
     SELECT id, device_id, timestamp, entropy_hash, signature,
-           aes_ciphertext, aes_iv, rtc_time, created_at
+           aes_ciphertext, aes_iv, rtc_time,
+           image_encrypted, image_iv, image_hash,
+           created_at
     FROM entropy_records
     ORDER BY created_at DESC
     LIMIT $1

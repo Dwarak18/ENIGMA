@@ -148,7 +148,10 @@ esp_err_t network_post_entropy(uint64_t    timestamp,
                                const char *pubkey_hex,
                                const char *rtc_time,
                                const char *aes_cipher_hex,
-                               const char *aes_iv_hex)
+                               const char *aes_iv_hex,
+                               const char *image_enc_hex,
+                               const char *image_iv_hex,
+                               const char *image_hash_hex)
 {
     /* Build JSON body */
     cJSON *root = cJSON_CreateObject();
@@ -167,6 +170,15 @@ esp_err_t network_post_entropy(uint64_t    timestamp,
     }
     if (aes_iv_hex) {
         cJSON_AddStringToObject(root, "aes_iv", aes_iv_hex);
+    }
+    if (image_enc_hex) {
+        cJSON_AddStringToObject(root, "image_encrypted", image_enc_hex);
+    }
+    if (image_iv_hex) {
+        cJSON_AddStringToObject(root, "image_iv", image_iv_hex);
+    }
+    if (image_hash_hex) {
+        cJSON_AddStringToObject(root, "image_hash", image_hash_hex);
     }
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);

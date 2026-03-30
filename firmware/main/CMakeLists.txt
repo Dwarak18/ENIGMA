@@ -7,6 +7,8 @@ idf_component_register(
         "storage.c"
         "rtc.c"
         "atecc608a.c"
+        "camera.c"
+        "aes_encryption.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash
@@ -17,4 +19,6 @@ idf_component_register(
         esp_hw_support
         json
         driver
+        esp_camera
+        esp_aes
 )

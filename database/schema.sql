@@ -37,6 +37,10 @@ CREATE TABLE IF NOT EXISTS entropy_records (
     aes_ciphertext  TEXT,                    -- 32-char hex  AES-256-CBC ciphertext (16-byte block)
     aes_iv          TEXT,                    -- 32-char hex  AES IV (16 bytes)
     rtc_time        TEXT,                    -- "HH:MM:SS" IST from device DS3231 RTC
+    image_bits      TEXT,                    -- 32/64-char hex  image bitstream (64/128 bits)
+    image_encrypted TEXT,                    -- 32/64-char hex  AES-256 encrypted image bits
+    image_iv        TEXT,                    -- 32-char hex  AES IV for image encryption
+    image_hash      TEXT,                    -- 64-char hex  SHA-256 of original image bits
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 

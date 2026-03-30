@@ -30,11 +30,17 @@ esp_err_t network_sntp_sync(void);
  *
  * Constructs and POSTs the JSON body:
  * {
- *   "device_id":    <string>,
- *   "timestamp":    <uint64>,
- *   "entropy_hash": <64-char hex>,
- *   "signature":    <128-char hex>,
- *   "public_key":   <130-char hex>  // sent only on first call
+ *   "device_id":       <string>,
+ *   "timestamp":       <uint64>,
+ *   "entropy_hash":    <64-char hex>,
+ *   "signature":       <128-char hex>,
+ *   "public_key":      <130-char hex>  // sent only on first call
+ *   "rtc_time":        <"HH:MM:SS">    // from DS3231
+ *   "aes_ciphertext":  <32-char hex>   // AES-256-CBC ciphertext (optional)
+ *   "aes_iv":          <32-char hex>   // AES IV (optional)
+ *   "image_encrypted": <32/64-char hex> // AES encrypted image bits (optional)
+ *   "image_iv":        <32-char hex>   // Image AES IV (optional)
+ *   "image_hash":      <64-char hex>   // SHA-256 of original image bits (optional)
  * }
  *
  * @param timestamp       UNIX epoch seconds
@@ -44,6 +50,9 @@ esp_err_t network_sntp_sync(void);
  * @param rtc_time        Null-terminated "HH:MM:SS" from DS3231           (may be NULL)
  * @param aes_cipher_hex  Null-terminated 32-char hex string  (AES-256-CBC ciphertext, may be NULL)
  * @param aes_iv_hex      Null-terminated 32-char hex string  (AES IV,                 may be NULL)
+ * @param image_enc_hex   Null-terminated hex string  (encrypted image bits, may be NULL)
+ * @param image_iv_hex    Null-terminated 32-char hex string  (image AES IV, may be NULL)
+ * @param image_hash_hex  Null-terminated 64-char hex string  (image hash, may be NULL)
  * @return ESP_OK if backend returned 2xx.
  */
 esp_err_t network_post_entropy(uint64_t    timestamp,
@@ -52,4 +61,7 @@ esp_err_t network_post_entropy(uint64_t    timestamp,
                                const char *pubkey_hex,
                                const char *rtc_time,
                                const char *aes_cipher_hex,
-                               const char *aes_iv_hex);
+                               const char *aes_iv_hex,
+                               const char *image_enc_hex,
+                               const char *image_iv_hex,
+                               const char *image_hash_hex);

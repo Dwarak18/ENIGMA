@@ -49,6 +49,11 @@
 /* ── Entropy ──────────────────────────────────────────── */
 #define ENTROPY_BYTES          64      /* bytes of raw entropy collected */
 
+/* ── Camera Configuration (ESP32-CAM) ───────────────── */
+#define CAMERA_ENABLED         1       /* set to 0 if no camera */
+#define CAMERA_MODEL_AI_THINKER /* or CAMERA_MODEL_WROVER_KIT */
+#define IMAGE_BITSTREAM_BITS   128     /* 64 or 128 bits to extract */
+
 /* ── Crypto ───────────────────────────────────────────── */
 #define HASH_BYTES             32      /* SHA-256 output  */
 #define SIG_BYTES              64      /* raw ECDSA r||s  */

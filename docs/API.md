@@ -31,21 +31,33 @@ Content-Type: application/json
 
 ```json
 {
-  "device_id":    "esp32-001",
-  "timestamp":    1700000000,
-  "entropy_hash": "a3f1...d9c4",
-  "signature":    "4f2e...88b0",
-  "public_key":   "0482...3c1a"
+  "device_id":       "esp32-001",
+  "timestamp":       1700000000,
+  "entropy_hash":    "a3f1...d9c4",
+  "signature":       "4f2e...88b0",
+  "public_key":      "0482...3c1a",
+  "rtc_time":        "15:30:45",
+  "aes_ciphertext":  "7b3e...9f2a",
+  "aes_iv":          "1c4d...8e5b",
+  "image_encrypted": "9a2f...4c8d",
+  "image_iv":        "5e7a...3b1c",
+  "image_hash":      "2d8c...6f4e"
 }
 ```
 
-| Field          | Type    | Required | Description                                          |
-|----------------|---------|----------|------------------------------------------------------|
-| `device_id`    | string  | ✓        | Device identifier (max 64 chars)                    |
-| `timestamp`    | integer | ✓        | UNIX epoch seconds (must be within ±60s of server)  |
-| `entropy_hash` | string  | ✓        | 64-char lowercase hex SHA-256 digest                |
-| `signature`    | string  | ✓        | 128-char lowercase hex raw ECDSA r‖s signature      |
-| `public_key`   | string  | ✗        | 130-char hex uncompressed P-256 key (sent once)     |
+| Field             | Type    | Required | Description                                          |
+|-------------------|---------|----------|------------------------------------------------------|
+| `device_id`       | string  | ✓        | Device identifier (max 64 chars)                    |
+| `timestamp`       | integer | ✓        | UNIX epoch seconds (must be within ±60s of server)  |
+| `entropy_hash`    | string  | ✓        | 64-char lowercase hex SHA-256 digest                |
+| `signature`       | string  | ✓        | 128-char lowercase hex raw ECDSA r‖s signature      |
+| `public_key`      | string  | ✗        | 130-char hex uncompressed P-256 key (sent once)     |
+| `rtc_time`        | string  | ✗        | "HH:MM:SS" format from DS3231 RTC                   |
+| `aes_ciphertext`  | string  | ✗        | 32-char hex AES-256-CBC ciphertext (16-byte block)  |
+| `aes_iv`          | string  | ✗        | 32-char hex AES IV (16 bytes)                       |
+| `image_encrypted` | string  | ✗        | 16-64 char hex AES encrypted image bitstream        |
+| `image_iv`        | string  | ✗        | 32-char hex AES IV for image decryption             |
+| `image_hash`      | string  | ✗        | 64-char hex SHA-256 of original image bitstream     |
 
 #### Responses
 
