@@ -21,10 +21,13 @@
 #include "storage.h"
 #include "network.h"
 #include "rtc.h"
+#include "websocket_client.h"
+#include "ota_handler.h"
 
 #if CAMERA_ENABLED
 #include "camera.h"
 #include "aes_encryption.h"
+#include "image_chunking.h"
 #endif
 
 #include "esp_log.h"
@@ -39,6 +42,51 @@
 #include <inttypes.h>
 
 static const char *TAG = "main";
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  OTA event handler – pause/resume WebSocket during firmware updates    */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+static void ota_event_handler(void *arg, esp_event_base_t event_base,
+                              int32_t event_id, void *event_data)
+{
+    (void)arg;
+    (void)event_data;
+    
+    if (event_base == ESP_HTTPS_OTA_EVENT) {
+        switch ((esp_https_ota_event_t)event_id) {
+            case ESP_HTTPS_OTA_START:
+                ESP_LOGI(TAG, "OTA update started");
+                ota_handler_begin();
+                break;
+                
+            case ESP_HTTPS_OTA_CONNECTED:
+                ESP_LOGI(TAG, "Connected to OTA server");
+                break;
+                
+            case ESP_HTTPS_OTA_GET_IMG_DESC:
+                ESP_LOGI(TAG, "Got image descriptor");
+                break;
+                
+            case ESP_HTTPS_OTA_FILE_UPDATED:
+                ESP_LOGI(TAG, "OTA file updated, preparing to reboot...");
+                ota_handler_complete();
+                break;
+                
+            case ESP_HTTPS_OTA_FINISH:
+                ESP_LOGI(TAG, "OTA finished");
+                break;
+                
+            case ESP_HTTPS_OTA_FAILED:
+                ESP_LOGE(TAG, "OTA failed, will stop pausing WebSocket");
+                websocket_resume();  /* Resume on failure */
+                break;
+                
+            default:
+                break;
+        }
+    }
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  IST time-print task (every 1 s, runs after Wi-Fi is off)             */
@@ -143,45 +191,36 @@ static void entropy_task(void *pvParam)
         }
 
 #if CAMERA_ENABLED
-        /* ── 6. Camera: Capture image and extract bitstream ────────── */
-        if (camera_capture_bitstream(image_bits, &image_bits_len) == ESP_OK) {
-            crypto_bytes_to_hex(image_bits, image_bits_len, image_bits_hex);
+        /* ── 6. Image chunking: Encrypt frame and compute integrity hash ─ */
+        image_chunk_t img_chunk;
+        if (image_chunking_process_frame(entropy_raw, timestamp, DEVICE_ID, &img_chunk) == ESP_OK) {
+            /* ── 7. Send image chunk via WebSocket ──────────────── */
+            websocket_chunk_t ws_chunk;
+            strncpy(ws_chunk.device_id, DEVICE_ID, sizeof(ws_chunk.device_id) - 1);
+            ws_chunk.device_id[sizeof(ws_chunk.device_id) - 1] = '\0';
+            ws_chunk.timestamp = timestamp;
+            ws_chunk.chunk_id = img_chunk.chunk_id;
+            ws_chunk.total_chunks = img_chunk.total_chunks;
+            memcpy(ws_chunk.iv, img_chunk.iv, 16);
+            ws_chunk.encrypted_data_len = img_chunk.encrypted_len;
+            memcpy(ws_chunk.encrypted_data, img_chunk.encrypted_data, img_chunk.encrypted_len);
+            strncpy(ws_chunk.hash, img_chunk.hash, sizeof(ws_chunk.hash) - 1);
+            ws_chunk.hash[sizeof(ws_chunk.hash) - 1] = '\0';
             
-            /* ── 7. Hash the bitstream ─────────────────────────────── */
-            if (camera_hash_bitstream(image_bits, image_bits_len, image_hash) == ESP_OK) {
-                crypto_bytes_to_hex(image_hash, 32, image_hash_hex);
+            if (websocket_send_image_chunk(&ws_chunk) == ESP_OK) {
+                ESP_LOGI(TAG, "Image chunk sent via WebSocket");
+            } else {
+                ESP_LOGD(TAG, "WebSocket not ready, skipping image stream");
             }
-            
-            /* ── 8. Generate random IV ─────────────────────────────── */
-            aes_generate_iv(image_iv);
-            crypto_bytes_to_hex(image_iv, 16, image_iv_hex);
-            
-            /* ── 9. AES encrypt using entropy as key ───────────────── */
-            if (aes_encrypt_bitstream(image_bits, image_bits_len,
-                                      entropy_raw, ENTROPY_BYTES,
-                                      image_iv, image_encrypted,
-                                      &image_encrypted_len) == ESP_OK) {
-                crypto_bytes_to_hex(image_encrypted, image_encrypted_len, image_encrypted_hex);
-            }
-            
-            ESP_LOGI(TAG, "Image bitstream: %.*s... (len=%zu)", 
-                     16, image_bits_hex, image_bits_len);
         }
 #endif
 
         ESP_LOGI(TAG, "hash=%.*s... ts=%" PRIu64 " rtc=%s", 16, hash_hex, timestamp, rtc_time_str);
 
-        /* ── 10. POST to backend ───────────────────────────────────── */
-#if CAMERA_ENABLED
-        esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex,
-                                             pubkey_arg, rtc_time_str,
-                                             image_bits_len > 0 ? image_encrypted_hex : NULL,
-                                             image_iv_hex);
-#else
+        /* ── 8. POST entropy to backend (existing HTTP for verification) ── */
         esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex,
                                              pubkey_arg, rtc_time_str,
                                              NULL, NULL);
-#endif
         if (err == ESP_OK) {
             pubkey_sent = true;
         } else {
@@ -208,6 +247,13 @@ void app_main(void)
 
     /* ── 1. NVS ────────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(storage_init());
+
+    /* ── 1.5. OTA handler ──────────────────────────────────────────– */
+    /* Check if this is a post-OTA boot and validate/resume */
+    ota_handler_init();
+    if (ota_handler_validate_and_resume() != ESP_OK) {
+        ESP_LOGW(TAG, "OTA validation had issues, but continuing");
+    }
 
     /* ── 2. DS3231 External RTC (init before SNTP to capture pre-sync time) */
     external_rtc_init();
@@ -270,18 +316,48 @@ void app_main(void)
     /* ── 7. Crypto ──────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(crypto_init());
 
+    /* ── 7.5. Register OTA event handler ────────────────────────────────– */
+    esp_event_handler_register(ESP_HTTPS_OTA_EVENT, ESP_EVENT_ANY_ID,
+                              &ota_event_handler, NULL);
+    ESP_LOGI(TAG, "OTA event handler registered");
+
 #if CAMERA_ENABLED
-    /* ── 8. Camera ──────────────────────────────────────────────────── */
-    ESP_LOGI(TAG, "Initializing camera...");
-    esp_err_t cam_err = camera_init();
-    if (cam_err != ESP_OK) {
+    /* ── 8. Image chunking ──────────────────────────────────────────── */
+    if (image_chunking_init() != ESP_OK) {
+        ESP_LOGW(TAG, "Image chunking init failed (continuing without WebSocket image stream)");
+    } else {
+        ESP_LOGI(TAG, "Image chunking initialized");
+    }
+    
+    /* ── 9. WebSocket client ────────────────────────────────────────── */
+    if (websocket_init() != ESP_OK) {
+        ESP_LOGW(TAG, "WebSocket init failed (falling back to HTTP only)");
+    } else {
+        ESP_LOGI(TAG, "WebSocket client initialized, connecting to backend");
+    }
+#endif
+
+    /* ── 10. Camera (kept for backwards compatibility) ── */
+    if (camera_init() != ESP_OK) {
         ESP_LOGW(TAG, "Camera init failed (continuing without camera)");
     } else {
         ESP_LOGI(TAG, "Camera initialized successfully");
     }
+#else
+    /* ── 7. Crypto ──────────────────────────────────────────────────── */
+    ESP_ERROR_CHECK(crypto_init());
 #endif
 
-    /* ── 9. Start tasks ─────────────────────────────────────────────── */
+    /* ── 11. WebSocket client (even without camera) ──────────────────── */
+#if !CAMERA_ENABLED
+    if (websocket_init() != ESP_OK) {
+        ESP_LOGW(TAG, "WebSocket init failed (falling back to HTTP only)");
+    } else {
+        ESP_LOGI(TAG, "WebSocket client initialized, connecting to backend");
+    }
+#endif
+
+    /* ── 12. Start tasks ────────────────────────────────────────────── */
     /* Print IST time every second */
     xTaskCreate(time_print_task, "time_print",
                 2048, NULL, 4, NULL);

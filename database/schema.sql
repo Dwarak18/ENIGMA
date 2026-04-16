@@ -107,3 +107,30 @@ ALTER TABLE entropy_records
     ADD COLUMN IF NOT EXISTS aes_ciphertext TEXT,
     ADD COLUMN IF NOT EXISTS aes_iv         TEXT,
     ADD COLUMN IF NOT EXISTS rtc_time       TEXT;
+
+-- =============================================================================
+-- Table: image_streams
+-- Real-time encrypted image streams from devices via WebSocket
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS image_streams (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id       TEXT         NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
+    timestamp       BIGINT       NOT NULL,   -- UNIX epoch from device
+    encrypted_data  TEXT         NOT NULL,   -- Hex-encoded encrypted bitstream
+    iv              TEXT         NOT NULL,   -- Hex-encoded 16-byte IV
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE  image_streams                IS 'Real-time encrypted image streams received via WebSocket';
+COMMENT ON COLUMN image_streams.device_id      IS 'Device source';
+COMMENT ON COLUMN image_streams.timestamp      IS 'Device timestamp when image was captured';
+COMMENT ON COLUMN image_streams.encrypted_data IS 'Hex-encoded AES-256-CBC encrypted bitstream';
+COMMENT ON COLUMN image_streams.iv             IS 'Hex-encoded 16-byte IV for this stream';
+
+-- Indexes for image streams
+CREATE INDEX IF NOT EXISTS idx_image_streams_device_timestamp
+    ON image_streams (device_id, timestamp DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_image_streams_unique
+    ON image_streams (device_id, timestamp);
+

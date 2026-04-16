@@ -11,6 +11,7 @@ const config     = require('../config');
 const logger     = require('../logger');
 const metrics    = require('../metrics');
 const { getDeviceStatuses, getTRNGStatus } = require('../services/entropyService');
+const { processImageChunk } = require('../services/imageStreamService');
 
 const SERVICE_START = Date.now();
 
@@ -153,6 +154,32 @@ function createWebSocketServer(httpServer) {
       } catch (err) {
         logger.error('entropy:lookup error', { error: err.message || String(err) });
         socket.emit('entropy:lookup_result', { ok: false });
+      }
+    });
+
+    /* ── Device: Encrypted image chunk received via WebSocket ──────────– */
+    socket.on('image:chunk', async (chunkData = {}) => {
+      try {
+        /* Extract device_id from chunk payload (sent by ESP32) */
+        const deviceId = chunkData.device_id;
+        if (!deviceId) {
+          logger.warn('Image chunk missing device_id');
+          return;
+        }
+
+        logger.debug('Image chunk received', {
+          device_id: deviceId,
+          chunk_id: chunkData.chunk_id,
+          total_chunks: chunkData.total_chunks,
+        });
+
+        /* Process asynchronously (non-blocking) */
+        // Don't await – return immediately so WebSocket stays responsive
+        processImageChunk(chunkData, deviceId, io).catch(err => {
+          logger.error('Image chunk processing error', { error: err.message || String(err) });
+        });
+      } catch (err) {
+        logger.error('image:chunk handler error', { error: err.message || String(err) });
       }
     });
   });

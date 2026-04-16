@@ -20,6 +20,7 @@
 /* Your PC's WiFi IP – ESP32 posts to nginx on port 80   */
 #define BACKEND_HOST           "http://172.20.137.1"
 #define BACKEND_ENTROPY_PATH   "/api/v1/entropy"
+#define BACKEND_WEBSOCKET_URI  "ws://172.20.137.1:3000"
 #define HTTP_TIMEOUT_MS        10000
 
 /* ── Timing ──────────────────────────────────────────── */
