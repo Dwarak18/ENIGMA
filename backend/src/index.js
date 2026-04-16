@@ -1,114 +1,58 @@
-/**
- * src/index.js
- * ENIGMA Backend – application entry point.
- *
- * Boots Express + Socket.IO server with:
- *   - Helmet security headers
- *   - CORS configured from environment
- *   - Rate limiting
- *   - JSON body parser
- *   - /api/v1/entropy  REST routes
- *   - /metrics         (optional Prometheus)
- *   - WebSocket server
- */
-'use strict';
+import 'dotenv/config';
+import { processRecord } from './services/recordService.js';
+import { flushBatch, getPendingBatchSize } from './batch/batchProcessor.js';
 
-const http           = require('http');
-const express        = require('express');
-const cors           = require('cors');
-const helmet         = require('helmet');
-const rateLimit      = require('express-rate-limit');
+async function runDemo() {
+  const sampleInputs = [
+    { deviceId: 'esp32-001', ts: Date.now(), payload: 'entropy-001' },
+    { deviceId: 'esp32-002', ts: Date.now(), payload: 'entropy-002' },
+    { deviceId: 'esp32-003', ts: Date.now(), payload: 'entropy-003' },
+    { deviceId: 'esp32-004', ts: Date.now(), payload: 'entropy-004' },
+    { deviceId: 'esp32-005', ts: Date.now(), payload: 'entropy-005' },
+    { deviceId: 'esp32-006', ts: Date.now(), payload: 'entropy-006' },
+  ];
 
-const config         = require('./config');
-const logger         = require('./logger');
-const metrics        = require('./metrics');
-const entropyRouter  = require('./routes/entropy');
-const systemRouter   = require('./routes/system');
-const imageStreamsRouter = require('./routes/imageStreams');
-const { createWebSocketServer } = require('./websocket/index');
-const entropyService = require('./services/entropyService');
+  for (const input of sampleInputs) {
+    const result = await processRecord(input);
+    console.info('Record processed', {
+      hash: result.hash,
+      pendingBatchSize: result.pendingBatchSize,
+    });
+  }
 
-/* ── App ─────────────────────────────────────────────────────────────── */
-const app = express();
-
-app.set('trust proxy', 1);   /* trust Nginx / Docker gateway */
-
-/* Security headers */
-app.use(helmet());
-
-/* CORS */
-app.use(cors({
-  origin: config.cors.origins,
-  methods: ['GET', 'POST'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
-
-/* Rate limiting */
-app.use(rateLimit({
-  windowMs: config.rateLimit.windowMs,
-  max:      config.rateLimit.max,
-  standardHeaders: true,
-  legacyHeaders:   false,
-  handler: (_req, res) => {
-    logger.warn('Rate limit exceeded');
-    res.status(429).json({ ok: false, code: 'RATE_LIMITED', message: 'Too many requests' });
-  },
-}));
-
-/* Body parser */
-app.use(express.json({ limit: '64kb' }));
-
-/* ── Health check ─────────────────────────────────────────────────────── */
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'enigma-backend' }));
-
-/* ── Prometheus metrics ───────────────────────────────────────────────── */
-if (config.metrics.enabled) {
-  app.get('/metrics', async (_req, res) => {
-    res.set('Content-Type', metrics.register.contentType);
-    res.end(await metrics.register.metrics());
-  });
-  logger.info('Prometheus metrics enabled at /metrics');
+  if (getPendingBatchSize() > 0) {
+    const txHash = await flushBatch();
+    console.info('Final batch flushed', { txHash });
+  }
 }
 
-/* ── API routes ───────────────────────────────────────────────────────── */
-app.use('/api/v1/entropy', entropyRouter);
-app.use('/api/v1/system',  systemRouter);app.use('/api/v1/image-streams', imageStreamsRouter);
-/* 404 fallback */
-app.use((_req, res) => res.status(404).json({ ok: false, code: 'NOT_FOUND' }));
-
-/* Global error handler */
-app.use((err, _req, res, _next) => {
-  logger.error('Unhandled Express error', { error: err.message, stack: err.stack });
-  res.status(500).json({ ok: false, code: 'INTERNAL_ERROR', message: 'Internal server error' });
-});
-
-/* ── HTTP + WebSocket server ──────────────────────────────────────────── */
-const httpServer = http.createServer(app);
-const io         = createWebSocketServer(httpServer);
-
-/* Inject Socket.IO instance into the entropy service */
-entropyService.setIO(io);
-
-/* ── Start ────────────────────────────────────────────────────────────── */
-httpServer.listen(config.port, () => {
-  logger.info(`ENIGMA backend listening on port ${config.port}`, {
-    env:  config.nodeEnv,
-    cors: config.cors.origins,
-  });
-});
-
-/* Graceful shutdown */
-process.on('SIGTERM', async () => {
-  logger.info('SIGTERM received – shutting down gracefully');
-  httpServer.close(() => {
-    logger.info('HTTP server closed');
+async function flushBeforeExit(signal) {
+  console.info('Shutdown signal received', { signal });
+  try {
+    if (getPendingBatchSize() > 0) {
+      await flushBatch();
+    }
+  } finally {
     process.exit(0);
-  });
+  }
+}
+
+process.on('SIGINT', () => {
+  void flushBeforeExit('SIGINT');
 });
 
-process.on('SIGINT', async () => {
-  logger.info('SIGINT received – shutting down gracefully');
-  httpServer.close(() => process.exit(0));
+process.on('SIGTERM', () => {
+  void flushBeforeExit('SIGTERM');
 });
 
-module.exports = { app, httpServer };
+runDemo().catch(async (err) => {
+  console.error('Backend pipeline failed', { error: err?.message || String(err) });
+  try {
+    if (getPendingBatchSize() > 0) {
+      await flushBatch();
+    }
+  } catch (flushErr) {
+    console.error('Final flush failed', { error: flushErr?.message || String(flushErr) });
+  }
+  process.exit(1);
+});

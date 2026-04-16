@@ -1,32 +1,47 @@
 # ══════════════════════════════════════════════════════════════════════════
-# ENIGMA Backend – Python FastAPI
+# ENIGMA Backend – Python FastAPI (multi-stage)
 # ══════════════════════════════════════════════════════════════════════════
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Build-only dependencies for native wheels
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    g++ \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt ./
+RUN pip wheel --no-cache-dir --wheel-dir /wheels -r requirements.txt
+
 
 FROM python:3.11-slim
 
 LABEL org.opencontainers.image.title="enigma-backend" \
       org.opencontainers.image.description="ENIGMA entropy verification and AES encryption backend with FastAPI"
 
-# Install system dependencies (for OpenCV and psycopg2)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    g++ \
-    libpq-dev \
-    libopencv-dev \
-    python3-opencv \
-    && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /app
 
-# Create virtual environment
-RUN python -m venv /opt/venv
-ENV PATH="/opt/venv/bin:$PATH"
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install Python dependencies
+# Runtime-only packages (no compilers/build toolchain)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
+    libglib2.0-0 \
+    libgl1 \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --from=builder /wheels /wheels
+RUN pip install --no-cache-dir --no-index --find-links=/wheels -r requirements.txt \
+    && rm -rf /wheels
 
-# Copy application source
 COPY app ./app
 
 # Non-root user for security
@@ -35,7 +50,6 @@ USER enigma
 
 EXPOSE 8000
 
-# Healthcheck
 HEALTHCHECK --interval=15s --timeout=5s --start-period=30s --retries=3 \
     CMD python -c "import httpx; httpx.get('http://127.0.0.1:8000/health').raise_for_status()" || exit 1
 

@@ -1,0 +1,14 @@
+.git
+.gitignore
+.dockerignore
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+build/
+out/
+
+sdkconfig.old
+*.md

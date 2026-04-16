@@ -11,6 +11,7 @@
 const express  = require('express');
 const router   = express.Router();
 const service  = require('../services/entropyService');
+const dataController = require('../controllers/data');
 const metrics  = require('../metrics');
 const logger   = require('../logger');
 const {
@@ -25,7 +26,7 @@ router.post('/', entropySubmitRules, async (req, res) => {
   metrics.entropyReceived.labels(device_id || 'unknown').inc();
 
   try {
-    const record = await service.processEntropy(req.body);
+    const record = await dataController.handlePostData(req.body);
     metrics.entropyVerified.labels(device_id).inc();
     return res.status(201).json({ ok: true, data: record });
   } catch (err) {
@@ -39,6 +40,30 @@ router.post('/', entropySubmitRules, async (req, res) => {
     }
 
     logger.error('Unhandled error in POST /entropy', { error: err.message });
+    return res.status(500).json({ ok: false, code: 'INTERNAL_ERROR', message: 'Internal server error' });
+  }
+});
+
+// Alias required by external integrations that post to /api/v1/data
+router.post('/data', entropySubmitRules, async (req, res) => {
+  const { device_id } = req.body;
+  metrics.entropyReceived.labels(device_id || 'unknown').inc();
+
+  try {
+    const record = await dataController.handlePostData(req.body);
+    metrics.entropyVerified.labels(device_id).inc();
+    return res.status(201).json({ ok: true, data: record });
+  } catch (err) {
+    const status = err.statusCode || 500;
+    const code   = err.code       || 'INTERNAL_ERROR';
+
+    metrics.entropyRejected.labels(code).inc();
+
+    if (status < 500) {
+      return res.status(status).json({ ok: false, code, message: err.message });
+    }
+
+    logger.error('Unhandled error in POST /entropy/data', { error: err.message });
     return res.status(500).json({ ok: false, code: 'INTERNAL_ERROR', message: 'Internal server error' });
   }
 });

@@ -134,3 +134,30 @@ CREATE INDEX IF NOT EXISTS idx_image_streams_device_timestamp
 CREATE UNIQUE INDEX IF NOT EXISTS idx_image_streams_unique
     ON image_streams (device_id, timestamp);
 
+-- =============================================================================
+-- Table: pending_blockchain
+-- Retry queue for failed blockchain writes
+-- =============================================================================
+CREATE TABLE IF NOT EXISTS pending_blockchain (
+    id              UUID         PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id       TEXT         NOT NULL REFERENCES devices(device_id) ON DELETE CASCADE,
+    timestamp       BIGINT       NOT NULL,
+    entropy_hash    TEXT         NOT NULL,
+    status          TEXT         NOT NULL DEFAULT 'pending',
+    retry_count     INTEGER      NOT NULL DEFAULT 0,
+    tx_hash         TEXT,
+    last_error      TEXT,
+    next_retry_at   TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    confirmed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE pending_blockchain IS 'Queue of blockchain writes awaiting retry/confirmation';
+
+CREATE INDEX IF NOT EXISTS idx_pending_blockchain_retry
+    ON pending_blockchain (status, next_retry_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_blockchain_record
+    ON pending_blockchain (device_id, timestamp, entropy_hash);
+

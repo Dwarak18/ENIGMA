@@ -41,4 +41,13 @@ module.exports = {
   ws: {
     transports: (process.env.WS_TRANSPORTS || 'websocket,polling').split(','),
   },
+
+  blockchain: {
+    rpcUrl: process.env.RPC_URL || '',
+    privateKey: process.env.PRIVATE_KEY || '',
+    contractAddress: process.env.CONTRACT_ADDRESS || '',
+    enabled: process.env.BLOCKCHAIN_ENABLED !== 'false',
+    retryIntervalMs: parseInt(process.env.BLOCKCHAIN_RETRY_INTERVAL_MS || '30000', 10),
+    retryBatchSize: parseInt(process.env.BLOCKCHAIN_RETRY_BATCH_SIZE || '20', 10),
+  },
 };

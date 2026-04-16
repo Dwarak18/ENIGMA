@@ -1,5 +1,13 @@
+.git
+.gitignore
+.dockerignore
+
 node_modules
 dist
+coverage
+
 .env
-.env.local
+.env.*
+
+*.log
 *.md

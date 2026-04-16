@@ -31,6 +31,22 @@ CREATE TABLE IF NOT EXISTS entropy_records (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+  -- ── Blockchain retry queue ────────────────────────────────────────────
+  CREATE TABLE IF NOT EXISTS pending_blockchain (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id       TEXT        NOT NULL REFERENCES devices(device_id),
+    timestamp       BIGINT      NOT NULL,
+    entropy_hash    TEXT        NOT NULL,
+    status          TEXT        NOT NULL DEFAULT 'pending',
+    retry_count     INTEGER     NOT NULL DEFAULT 0,
+    tx_hash         TEXT,
+    last_error      TEXT,
+    next_retry_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    confirmed_at    TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  );
+
 -- ── AES + RTC columns (idempotent – safe to re-run on older schemas) ────
 ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS aes_ciphertext TEXT;
 ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS aes_iv         TEXT;
@@ -41,6 +57,12 @@ CREATE INDEX IF NOT EXISTS idx_entropy_device_id      ON entropy_records (device
 CREATE INDEX IF NOT EXISTS idx_entropy_device_created ON entropy_records (device_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entropy_created_at     ON entropy_records (created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_entropy_timestamp      ON entropy_records (timestamp DESC);
+
+CREATE INDEX IF NOT EXISTS idx_pending_blockchain_retry
+  ON pending_blockchain (status, next_retry_at);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_blockchain_record
+  ON pending_blockchain (device_id, timestamp, entropy_hash);
 
 -- ── Unique constraint: prevent replay attacks ──────────────────────────
 CREATE UNIQUE INDEX IF NOT EXISTS idx_entropy_replay_guard

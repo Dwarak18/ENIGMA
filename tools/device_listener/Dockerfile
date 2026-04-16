@@ -17,6 +17,9 @@
 # ──────────────────────────────────────────────────────────────────────────────
 FROM python:3.11-slim
 
+ENV PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
 # libudev1 is required at runtime by pyudev Monitor
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libudev1 && \
