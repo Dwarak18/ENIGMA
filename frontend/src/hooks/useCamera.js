@@ -3,24 +3,79 @@
  * Custom hook for webcam/camera access and image capture.
  */
 
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef, useCallback, useEffect } from 'react';
 
 export const useCamera = () => {
   const [stream, setStream] = useState(null);
   const [error, setError] = useState(null);
   const [isActive, setIsActive] = useState(false);
+  const [availableCameras, setAvailableCameras] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState('');
   const videoRef = useRef(null);
 
-  const startCamera = useCallback(async (constraints = { video: true, audio: false }) => {
+  const refreshCameraList = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      return;
+    }
+
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices
+      .filter((device) => device.kind === 'videoinput')
+      .map((device, index) => ({
+        id: device.deviceId,
+        label: device.label || `Camera ${index + 1}`,
+      }));
+
+    setAvailableCameras(cameras);
+
+    if (cameras.length > 0 && !selectedCameraId) {
+      setSelectedCameraId(cameras[0].id);
+    }
+  }, [selectedCameraId]);
+
+  useEffect(() => {
+    refreshCameraList().catch(() => {});
+
+    if (!navigator.mediaDevices?.addEventListener) {
+      return undefined;
+    }
+
+    const handleDeviceChange = () => {
+      refreshCameraList().catch(() => {});
+    };
+
+    navigator.mediaDevices.addEventListener('devicechange', handleDeviceChange);
+    return () => navigator.mediaDevices.removeEventListener('devicechange', handleDeviceChange);
+  }, [refreshCameraList]);
+
+  const startCamera = useCallback(async (constraints = null) => {
     try {
       setError(null);
-      const mediaStream = await navigator.mediaDevices.getUserMedia(constraints);
+      if (stream) {
+        stream.getTracks().forEach((track) => track.stop());
+      }
+
+      const resolvedConstraints =
+        constraints || {
+          video: selectedCameraId
+            ? {
+                deviceId: { ideal: selectedCameraId },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              }
+            : true,
+          audio: false,
+        };
+
+      const mediaStream = await navigator.mediaDevices.getUserMedia(resolvedConstraints);
       setStream(mediaStream);
       setIsActive(true);
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
       }
+
+      await refreshCameraList();
 
       return mediaStream;
     } catch (err) {
@@ -35,7 +90,22 @@ export const useCamera = () => {
       setIsActive(false);
       throw err;
     }
-  }, []);
+  }, [selectedCameraId, stream, refreshCameraList]);
+
+  const selectCamera = useCallback(
+    async (cameraId) => {
+      setSelectedCameraId(cameraId);
+      await startCamera({
+        video: {
+          deviceId: { exact: cameraId },
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+        },
+        audio: false,
+      });
+    },
+    [startCamera]
+  );
 
   const stopCamera = useCallback(() => {
     if (stream) {
@@ -81,6 +151,10 @@ export const useCamera = () => {
     stream,
     error,
     isActive,
+    availableCameras,
+    selectedCameraId,
+    selectCamera,
+    refreshCameraList,
     startCamera,
     stopCamera,
     captureFrame,

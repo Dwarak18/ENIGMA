@@ -6,6 +6,7 @@
 import { useState, useCallback } from 'react';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const PLACEHOLDER_PUBLIC_KEY = `04${'0'.repeat(128)}`;
 
 export const useEnigmaAPI = () => {
   const [loading, setLoading] = useState(false);
@@ -60,17 +61,42 @@ export const useEnigmaAPI = () => {
     [request]
   );
 
+  const ensureDeviceRegistered = useCallback(
+    async (deviceId) => {
+      if (!deviceId) return;
+
+      try {
+        await getDevice(deviceId);
+      } catch (err) {
+        if (!/not found|HTTP 404/i.test(err.message)) {
+          throw err;
+        }
+
+        try {
+          await registerDevice(deviceId, PLACEHOLDER_PUBLIC_KEY);
+        } catch (registerErr) {
+          if (!/already registered|HTTP 409/i.test(registerErr.message)) {
+            throw registerErr;
+          }
+        }
+      }
+    },
+    [getDevice, registerDevice]
+  );
+
   // Entropy capture
   const captureEntropy = useCallback(
-    (image, deviceId) =>
-      request('/capture', {
+    async (image, deviceId) => {
+      await ensureDeviceRegistered(deviceId);
+      return request('/capture', {
         method: 'POST',
         body: JSON.stringify({
           image,
           device_id: deviceId,
         }),
-      }),
-    [request]
+      });
+    },
+    [ensureDeviceRegistered, request]
   );
 
   // Records endpoints

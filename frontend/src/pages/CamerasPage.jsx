@@ -10,15 +10,24 @@ import StatusBadge from '../components/StatusBadge';
 import EntropyCard from '../components/EntropyCard';
 
 export default function CamerasPage() {
-  const [deviceId, setDeviceId] = useState('device-001');
+  const [deviceId, setDeviceId] = useState('webcam-local-001');
   const [captureStatus, setCaptureStatus] = useState('idle');
   const [lastCapture, setLastCapture] = useState(null);
   const [captureError, setCaptureError] = useState(null);
   const [autoCapture, setAutoCapture] = useState(false);
   const [captureInterval, setCaptureInterval] = useState(10);
 
-  const { videoRef, error: cameraError, isActive, startCamera, stopCamera, captureFrame } =
-    useCamera();
+  const {
+    videoRef,
+    error: cameraError,
+    isActive,
+    availableCameras,
+    selectedCameraId,
+    selectCamera,
+    startCamera,
+    stopCamera,
+    captureFrame,
+  } = useCamera();
   const { captureEntropy, loading: apiLoading } = useEnigmaAPI();
 
   useEffect(() => {
@@ -80,8 +89,26 @@ export default function CamerasPage() {
               onChange={(e) => setDeviceId(e.target.value)}
               disabled={isActive}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100"
-              placeholder="e.g., device-001"
+              placeholder="e.g., webcam-local-001"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Camera Source</label>
+            <select
+              value={selectedCameraId}
+              onChange={(e) => selectCamera(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              <option value="" disabled>
+                Select a camera
+              </option>
+              {availableCameras.map((cam) => (
+                <option key={cam.id} value={cam.id}>
+                  {cam.label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div>
