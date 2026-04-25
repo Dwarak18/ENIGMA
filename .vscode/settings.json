@@ -1,4 +1,8 @@
 {
-    "idf.currentSetup": "C:/Espressif/frameworks/esp-idf-v5.5.2/",
-    "cmake.ignoreCMakeListsMissing": true
+    "idf.currentSetup": "C:/Espressif/frameworks/esp-idf-v5.1.7/",
+    "cmake.ignoreCMakeListsMissing": true,
+    "idf.openOcdConfigs": [
+        "board/esp32s3-builtin.cfg"
+    ],
+    "idf.portWin": "COM3"
 }

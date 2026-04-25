@@ -280,8 +280,9 @@ static void entropy_task(void *pvParam)
 
         /* ── 11. POST to backend ──────────────────────────────────── */
         esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex,
-                                             pubkey_arg, rtc_time_str,
-                                             cipher_hex, iv_hex);
+                             pubkey_arg, rtc_time_str,
+                             cipher_hex, iv_hex,
+                             NULL, NULL, NULL);
         if (err == ESP_OK) {
             printf("  [POST] Backend accepted ✓\n\n");
             pubkey_sent = true;

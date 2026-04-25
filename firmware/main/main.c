@@ -24,12 +24,6 @@
 #include "websocket_client.h"
 #include "ota_handler.h"
 
-#if CAMERA_ENABLED
-#include "camera.h"
-#include "aes_encryption.h"
-#include "image_chunking.h"
-#endif
-
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -131,21 +125,6 @@ static void entropy_task(void *pvParam)
     /* DS3231 RTC time string "HH:MM:SS" */
     char rtc_time_str[20];
 
-#if CAMERA_ENABLED
-    /* Camera bitstream buffers */
-    uint8_t image_bits[16];      /* 128 bits = 16 bytes */
-    uint8_t image_encrypted[32]; /* AES ciphertext (max 32 bytes) */
-    uint8_t image_iv[16];        /* AES IV */
-    uint8_t image_hash[32];      /* SHA-256 of original bits */
-    size_t  image_bits_len = 0;
-    size_t  image_encrypted_len = 0;
-    
-    char image_bits_hex[33];
-    char image_encrypted_hex[65];
-    char image_iv_hex[33];
-    char image_hash_hex[65];
-#endif
-
     for (;;) {
         int64_t cycle_start = esp_timer_get_time();
 
@@ -190,37 +169,13 @@ static void entropy_task(void *pvParam)
             }
         }
 
-#if CAMERA_ENABLED
-        /* ── 6. Image chunking: Encrypt frame and compute integrity hash ─ */
-        image_chunk_t img_chunk;
-        if (image_chunking_process_frame(entropy_raw, timestamp, DEVICE_ID, &img_chunk) == ESP_OK) {
-            /* ── 7. Send image chunk via WebSocket ──────────────── */
-            websocket_chunk_t ws_chunk;
-            strncpy(ws_chunk.device_id, DEVICE_ID, sizeof(ws_chunk.device_id) - 1);
-            ws_chunk.device_id[sizeof(ws_chunk.device_id) - 1] = '\0';
-            ws_chunk.timestamp = timestamp;
-            ws_chunk.chunk_id = img_chunk.chunk_id;
-            ws_chunk.total_chunks = img_chunk.total_chunks;
-            memcpy(ws_chunk.iv, img_chunk.iv, 16);
-            ws_chunk.encrypted_data_len = img_chunk.encrypted_len;
-            memcpy(ws_chunk.encrypted_data, img_chunk.encrypted_data, img_chunk.encrypted_len);
-            strncpy(ws_chunk.hash, img_chunk.hash, sizeof(ws_chunk.hash) - 1);
-            ws_chunk.hash[sizeof(ws_chunk.hash) - 1] = '\0';
-            
-            if (websocket_send_image_chunk(&ws_chunk) == ESP_OK) {
-                ESP_LOGI(TAG, "Image chunk sent via WebSocket");
-            } else {
-                ESP_LOGD(TAG, "WebSocket not ready, skipping image stream");
-            }
-        }
-#endif
-
         ESP_LOGI(TAG, "hash=%.*s... ts=%" PRIu64 " rtc=%s", 16, hash_hex, timestamp, rtc_time_str);
 
         /* ── 8. POST entropy to backend (existing HTTP for verification) ── */
         esp_err_t err = network_post_entropy(timestamp, hash_hex, sig_hex,
                                              pubkey_arg, rtc_time_str,
-                                             NULL, NULL);
+                                             NULL, NULL,
+                                             NULL, NULL, NULL);
         if (err == ESP_OK) {
             pubkey_sent = true;
         } else {
@@ -321,43 +276,14 @@ void app_main(void)
                               &ota_event_handler, NULL);
     ESP_LOGI(TAG, "OTA event handler registered");
 
-#if CAMERA_ENABLED
-    /* ── 8. Image chunking ──────────────────────────────────────────── */
-    if (image_chunking_init() != ESP_OK) {
-        ESP_LOGW(TAG, "Image chunking init failed (continuing without WebSocket image stream)");
-    } else {
-        ESP_LOGI(TAG, "Image chunking initialized");
-    }
-    
-    /* ── 9. WebSocket client ────────────────────────────────────────── */
+    /* ── 8. WebSocket client ────────────────────────────────────────── */
     if (websocket_init() != ESP_OK) {
         ESP_LOGW(TAG, "WebSocket init failed (falling back to HTTP only)");
     } else {
         ESP_LOGI(TAG, "WebSocket client initialized, connecting to backend");
     }
-#endif
 
-    /* ── 10. Camera (kept for backwards compatibility) ── */
-    if (camera_init() != ESP_OK) {
-        ESP_LOGW(TAG, "Camera init failed (continuing without camera)");
-    } else {
-        ESP_LOGI(TAG, "Camera initialized successfully");
-    }
-#else
-    /* ── 7. Crypto ──────────────────────────────────────────────────── */
-    ESP_ERROR_CHECK(crypto_init());
-#endif
-
-    /* ── 11. WebSocket client (even without camera) ──────────────────── */
-#if !CAMERA_ENABLED
-    if (websocket_init() != ESP_OK) {
-        ESP_LOGW(TAG, "WebSocket init failed (falling back to HTTP only)");
-    } else {
-        ESP_LOGI(TAG, "WebSocket client initialized, connecting to backend");
-    }
-#endif
-
-    /* ── 12. Start tasks ────────────────────────────────────────────── */
+    /* ── 9. Start tasks ────────────────────────────────────────────── */
     /* Print IST time every second */
     xTaskCreate(time_print_task, "time_print",
                 2048, NULL, 4, NULL);
