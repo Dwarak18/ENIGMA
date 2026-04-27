@@ -3,9 +3,9 @@
  * Shows the pairing/connection status of each registered hardware device.
  *
  * States:
- *   PAIRED + ONLINE   → green pulsing dot  + "⬡ CONNECTED"
- *   PAIRED + OFFLINE  → yellow dot         + "PAIRED / OFFLINE"
- *   UNPAIRED (no key) → red dot            + "NOT PAIRED"
+ *   PAIRED + ONLINE   -> verified by recent backend API POST
+ *   PAIRED + OFFLINE  -> paired but no recent backend POST
+ *   UNPAIRED          -> no public key registered
  *
  * Props:
  *   devices      – array from systemStatus.devices (DB snapshot)
@@ -59,11 +59,11 @@ export default function DevicePairingBadge({ devices = [], deviceStates = {} }) 
           dotColor   = '#10b981';
           dotGlow    = '0 0 6px #10b981';
           dotPulse   = true;
-          label      = '⬡ CONNECTED';
+          label      = 'VERIFIED API LINK';
           labelColor = '#10b981';
         } else if (isPaired && !isOnline) {
           dotColor   = '#f59e0b';
-          label      = 'PAIRED / OFFLINE';
+          label      = 'PAIRED / NO RECENT POST';
           labelColor = '#f59e0b';
         }
 
@@ -120,7 +120,7 @@ export default function DevicePairingBadge({ devices = [], deviceStates = {} }) 
               </div>
               {isOnline && rtcTime && (
                 <div style={{ fontSize: '9px', color: '#10b981', marginTop: '1px', fontFamily: 'monospace', letterSpacing: '.04em' }}>
-                  ◷ {rtcTime} IST
+                  RTC {rtcTime} IST
                 </div>
               )}
               <div style={{ fontSize: '9px', color: '#52525b', marginTop: '1px' }}>
@@ -131,10 +131,10 @@ export default function DevicePairingBadge({ devices = [], deviceStates = {} }) 
             {/* Paired key icon */}
             {isPaired && (
               <div
-                title="Public key registered"
+                title="Public key registered from verified ESP payload"
                 style={{ fontSize: '12px', color: '#3b82f6', flexShrink: 0 }}
               >
-                ⬢
+                key
               </div>
             )}
           </div>

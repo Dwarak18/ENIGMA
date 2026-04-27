@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS entropy_records (
     image_encrypted TEXT,                    -- 32/64-char hex  AES-256 encrypted image bits
     image_iv        TEXT,                    -- 32-char hex  AES IV for image encryption
     image_hash      TEXT,                    -- 64-char hex  SHA-256 of original image bits
+    integrity_hash  TEXT,                    -- 64-char hex  chain verification hash
+    previous_hash   TEXT,                    -- 64-char hex  previous record integrity hash
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
@@ -106,7 +108,9 @@ COMMENT ON VIEW entropy_feed IS 'Enriched entropy records joined with device pub
 ALTER TABLE entropy_records
     ADD COLUMN IF NOT EXISTS aes_ciphertext TEXT,
     ADD COLUMN IF NOT EXISTS aes_iv         TEXT,
-    ADD COLUMN IF NOT EXISTS rtc_time       TEXT;
+    ADD COLUMN IF NOT EXISTS rtc_time       TEXT,
+    ADD COLUMN IF NOT EXISTS integrity_hash TEXT,
+    ADD COLUMN IF NOT EXISTS previous_hash  TEXT;
 
 -- =============================================================================
 -- Table: image_streams
@@ -118,6 +122,12 @@ CREATE TABLE IF NOT EXISTS image_streams (
     timestamp       BIGINT       NOT NULL,   -- UNIX epoch from device
     encrypted_data  TEXT         NOT NULL,   -- Hex-encoded encrypted bitstream
     iv              TEXT         NOT NULL,   -- Hex-encoded 16-byte IV
+    image_hash      TEXT,                    -- SHA-256 of original captured image bytes
+    encrypted_hash  TEXT,                    -- SHA-256 of encrypted bitstream bytes
+    encryption_key_hash TEXT,                -- SHA-256 of derived AES key
+    key_time_hash   TEXT,                    -- SHA-256(encryption key || ESP/server time)
+    image_preview   TEXT,                    -- Data URL preview for frontend display
+    byte_size       INTEGER,
     created_at      TIMESTAMPTZ  NOT NULL DEFAULT NOW()
 );
 
@@ -126,6 +136,16 @@ COMMENT ON COLUMN image_streams.device_id      IS 'Device source';
 COMMENT ON COLUMN image_streams.timestamp      IS 'Device timestamp when image was captured';
 COMMENT ON COLUMN image_streams.encrypted_data IS 'Hex-encoded AES-256-CBC encrypted bitstream';
 COMMENT ON COLUMN image_streams.iv             IS 'Hex-encoded 16-byte IV for this stream';
+COMMENT ON COLUMN image_streams.image_hash     IS 'SHA-256 hash of the original captured image bytes';
+COMMENT ON COLUMN image_streams.key_time_hash  IS 'SHA-256 hash over the encryption key and ESP/server time';
+
+ALTER TABLE image_streams
+    ADD COLUMN IF NOT EXISTS image_hash TEXT,
+    ADD COLUMN IF NOT EXISTS encrypted_hash TEXT,
+    ADD COLUMN IF NOT EXISTS encryption_key_hash TEXT,
+    ADD COLUMN IF NOT EXISTS key_time_hash TEXT,
+    ADD COLUMN IF NOT EXISTS image_preview TEXT,
+    ADD COLUMN IF NOT EXISTS byte_size INTEGER;
 
 -- Indexes for image streams
 CREATE INDEX IF NOT EXISTS idx_image_streams_device_timestamp

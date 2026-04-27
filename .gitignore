@@ -7,6 +7,35 @@ yarn-debug.log*
 dist/
 build/
 
+# ── Python caches ──────────────────────────────────────
+__pycache__/
+__pychache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+**/.pytest_cache/
+.mypy_cache/
+**/.mypy_cache/
+.ruff_cache/
+**/.ruff_cache/
+.pyre/
+**/.pyre/
+.hypothesis/
+**/.hypothesis/
+.tox/
+**/.tox/
+.nox/
+**/.nox/
+
+# ── Python virtual environments ────────────────────────
+venv/
+**/venv/
+.venv/
+**/.venv/
+env/
+**/env/
+*/venv/*
 # ── Environment files (NEVER commit real secrets) ─────
 .env
 .env.local
@@ -37,3 +66,12 @@ Thumbs.db
 
 # ── Test coverage ──────────────────────────────────────
 coverage/
+__pycache__/
+__pychache__/
+venv/
+.venv/
+env/
+firmware/__pycache__/
+backend/venv/
+**/.venv/
+**/env/

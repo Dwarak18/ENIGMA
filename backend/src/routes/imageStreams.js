@@ -3,6 +3,7 @@
  * REST API endpoints for querying image streams
  *
  * Routes:
+ *   POST /api/v1/image-streams/capture
  *   GET  /api/v1/image-streams/:device_id/latest
  *   GET  /api/v1/image-streams/:device_id/history
  */
@@ -11,7 +12,57 @@
 const express = require('express');
 const router = express.Router();
 const logger  = require('../logger');
-const { getLatestImageStream, getImageStreamHistory } = require('../services/imageStreamService');
+const {
+  captureLaptopImage,
+  getLatestImageStream,
+  getImageStreamHistory,
+} = require('../services/imageStreamService');
+
+function serializeStream(stream, device_id = stream.device_id) {
+  return {
+    id: stream.id,
+    device_id,
+    timestamp: Number(stream.timestamp),
+    encrypted_data: stream.encrypted_data,
+    iv: stream.iv,
+    image_hash: stream.image_hash,
+    encrypted_hash: stream.encrypted_hash,
+    encryption_key_hash: stream.encryption_key_hash,
+    key_time_hash: stream.key_time_hash,
+    image_preview: stream.image_preview,
+    byte_size: stream.byte_size,
+    created_at: stream.created_at,
+  };
+}
+
+router.post('/capture', async (req, res) => {
+  try {
+    const { device_id, image_base64, esp_time } = req.body || {};
+    if (!device_id || typeof device_id !== 'string') {
+      return res.status(400).json({ ok: false, code: 'INVALID_DEVICE_ID' });
+    }
+    if (!image_base64 || typeof image_base64 !== 'string') {
+      return res.status(400).json({ ok: false, code: 'INVALID_IMAGE' });
+    }
+
+    const stream = await captureLaptopImage({
+      deviceId: device_id,
+      imageBase64: image_base64,
+      espTime: esp_time,
+    });
+
+    return res.status(201).json({ ok: true, data: serializeStream(stream) });
+  } catch (err) {
+    logger.error('POST /image-streams/capture error', {
+      error: err.message || String(err),
+    });
+    return res.status(err.statusCode || 500).json({
+      ok: false,
+      code: err.statusCode ? 'BAD_REQUEST' : 'INTERNAL_ERROR',
+      message: err.message || 'Internal error',
+    });
+  }
+});
 
 /**
  * GET /api/v1/image-streams/:device_id/latest
@@ -32,11 +83,7 @@ router.get('/:device_id/latest', async (req, res) => {
     res.json({
       ok: true,
       data: {
-        device_id,
-        timestamp: stream.timestamp,
-        encrypted_data: stream.encrypted_data,
-        iv: stream.iv,
-        created_at: stream.created_at,
+        ...serializeStream(stream, device_id),
       },
     });
   } catch (err) {
@@ -68,13 +115,7 @@ router.get('/:device_id/history', async (req, res) => {
     res.json({
       ok: true,
       count: streams.length,
-      data: streams.map(s => ({
-        device_id,
-        timestamp: s.timestamp,
-        encrypted_data: s.encrypted_data,
-        iv: s.iv,
-        created_at: s.created_at,
-      })),
+      data: streams.map(s => serializeStream(s, device_id)),
     });
   } catch (err) {
     logger.error('GET /image-streams/:device_id/history error', {

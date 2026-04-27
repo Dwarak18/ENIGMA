@@ -39,7 +39,7 @@
 #include "crypto.h"
 #include "storage.h"
 #include "network.h"
-#include "atecc608a.h"
+// [REMOVED: atecc608a.h] - using mbedTLS only for SHA-256
 
 static const char *TAG = "enigma_pro";
 
@@ -117,25 +117,13 @@ static esp_err_t aes_encrypt_block(const uint8_t *plain,
 /**
  * SHA-256( aes_key[32] ‖ datetime_str )  →  hash_out[32]
  *
- * Uses the ATECC608A hardware engine when the chip is present;
- * falls back to mbedTLS software SHA-256 otherwise.
+ * Uses mbedTLS software SHA-256 (ESP32 hardware RNG backed).
+ * [REMOVED: ATECC608A hardware SHA-256]
  */
 static esp_err_t sha256_key_datetime(const char *datetime_str,
                                      uint8_t     hash_out[CRYPTO_HASH_LEN])
 {
-    /* ── Try ATECC608A hardware engine first ── */
-    if (atecc608a_present()) {
-        size_t  dt_len = strlen(datetime_str);
-        uint8_t input[AES_KEY_BYTES + 32];   /* key(32) + datetime(≤19) */
-        memcpy(input, s_aes_key, AES_KEY_BYTES);
-        memcpy(input + AES_KEY_BYTES, datetime_str, dt_len);
-
-        esp_err_t hw = atecc608a_sha256(input, AES_KEY_BYTES + dt_len, hash_out);
-        if (hw == ESP_OK) return ESP_OK;
-        ESP_LOGW(TAG, "ATECC608A SHA-256 failed – falling back to mbedTLS");
-    }
-
-    /* ── Software fallback (mbedTLS) ── */
+    /* ── Software SHA-256 (mbedTLS) ── */
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
 
@@ -310,35 +298,7 @@ void app_main(void)
     /* ── 1. NVS ──────────────────────────────────────────────────── */
     ESP_ERROR_CHECK(storage_init());
 
-    /* ── 2. DS3231 + ATECC608A – hardware check before Wi-Fi ─────── */
-    /* Run both I2C peripherals early so the serial monitor shows     */
-    /* the connection result immediately, independent of Wi-Fi.       */
-    bool rtc_ok = (external_rtc_init() == ESP_OK);
-
-    /* ATECC608A on I2C_NUM_1 (SDA=GPIO3, SCL=GPIO7) – non-fatal */
-    atecc608a_init();
-
-    /* ── PRE-SYNC snapshot ───────────────────────────────────────── */
-    {
-        char pre_rtc[20];
-        rtc_get_time(pre_rtc);          /* "00:00:00" if DS3231 absent */
-        time_t pre_sys = 0;
-        time(&pre_sys);
-        struct tm pre_tm;
-        gmtime_r(&pre_sys, &pre_tm);
-        printf("\n╔══════════════════════════════════════════════════════════════╗\n");
-        printf("║                   PRE-SYNC TIME STATE                       ║\n");
-        printf("╠══════════════════════════════════════════════════════════════╣\n");
-        printf("  DS3231 time  : %s (IST as stored on chip)%s\n",
-               pre_rtc, rtc_ok ? "" : "  [DS3231 offline – showing 00:00:00]");
-        printf("  NTP/system   : UTC epoch=%" PRId64 "  (%04d-%02d-%02d %02d:%02d:%02d UTC)\n",
-               (int64_t)pre_sys,
-               pre_tm.tm_year + 1900, pre_tm.tm_mon + 1, pre_tm.tm_mday,
-               pre_tm.tm_hour, pre_tm.tm_min, pre_tm.tm_sec);
-        printf("╚══════════════════════════════════════════════════════════════╝\n\n");
-    }
-
-    /* ── 3. Wi-Fi + SNTP ─────────────────────────────────────────── */
+/* ── 2. Wi-Fi + SNTP ──────────────────────────────────────────── */
     ESP_ERROR_CHECK(network_wifi_connect());
     ESP_ERROR_CHECK(network_sntp_sync());   /* logs full IST date-time */
 
@@ -356,35 +316,17 @@ void app_main(void)
                (int64_t)utc_now,
                post_tm.tm_year + 1900, post_tm.tm_mon + 1, post_tm.tm_mday,
                post_tm.tm_hour, post_tm.tm_min, post_tm.tm_sec);
-        printf("  DS3231 time  : (will be written next…)\n");
         printf("╚══════════════════════════════════════════════════════════════╝\n\n");
     }
+    /* [REMOVED: DS3231 RTC sync] - using SNTP time only */
 
-    /* ── 3b. Sync DS3231 to IST from SNTP ───────────────────────── */
-    if (rtc_ok) {
-        printf("  [RTC] Writing IST to DS3231 (UTC %" PRId64 " + 5h30m)…\n",
-               (int64_t)utc_now);
-        rtc_set_time_from_epoch(utc_now);
-
-        /* ── POST-SYNC snapshot (DS3231 after write) ─────────────── */
-        char post_rtc[20];
-        rtc_get_time(post_rtc);
-        printf("\n╔══════════════════════════════════════════════════════════════╗\n");
-        printf("║           POST-SYNC TIME STATE (DS3231 after write)         ║\n");
-        printf("╠══════════════════════════════════════════════════════════════╣\n");
-        printf("  DS3231 time  : %s (IST just written from NTP)\n", post_rtc);
-        printf("╚══════════════════════════════════════════════════════════════╝\n\n");
-    } else {
-        ESP_LOGW("enigma_pro", "DS3231 unavailable – skipping RTC sync (SNTP time still valid)");
-    }
-
-    /* ── 4. AES-256 key – load from NVS or generate ─────────────── */
+/* ── 3. AES-256 key – load from NVS or generate ─────────────── */
     ESP_ERROR_CHECK(aes_key_init());
 
-    /* ── 5. ECDSA keypair – load from NVS or generate ────────────── */
+    /* ── 4. ECDSA keypair – load from NVS or generate ────────────── */
     ESP_ERROR_CHECK(crypto_init());
 
-    /* ── 6. Start entropy loop ───────────────────────────────────── */
+    /* ── 5. Start entropy loop ───────────────────────────────────── */
     printf("\n  ENIGMA operational – emitting every %d s\n\n",
            ENTROPY_INTERVAL_MS / 1000);
 

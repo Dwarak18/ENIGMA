@@ -51,6 +51,39 @@ CREATE TABLE IF NOT EXISTS entropy_records (
 ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS aes_ciphertext TEXT;
 ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS aes_iv         TEXT;
 ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS rtc_time       TEXT;
+ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS image_encrypted TEXT;
+ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS image_iv        TEXT;
+ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS image_hash      TEXT;
+ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS integrity_hash  TEXT;
+ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS previous_hash   TEXT;
+
+CREATE TABLE IF NOT EXISTS image_streams (
+    id              UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    device_id       TEXT        NOT NULL REFERENCES devices(device_id),
+    timestamp       BIGINT      NOT NULL,
+    encrypted_data  TEXT        NOT NULL,
+    iv              TEXT        NOT NULL,
+    image_hash      TEXT,
+    encrypted_hash  TEXT,
+    encryption_key_hash TEXT,
+    key_time_hash   TEXT,
+    image_preview   TEXT,
+    byte_size       INTEGER,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+ALTER TABLE image_streams ADD COLUMN IF NOT EXISTS image_hash TEXT;
+ALTER TABLE image_streams ADD COLUMN IF NOT EXISTS encrypted_hash TEXT;
+ALTER TABLE image_streams ADD COLUMN IF NOT EXISTS encryption_key_hash TEXT;
+ALTER TABLE image_streams ADD COLUMN IF NOT EXISTS key_time_hash TEXT;
+ALTER TABLE image_streams ADD COLUMN IF NOT EXISTS image_preview TEXT;
+ALTER TABLE image_streams ADD COLUMN IF NOT EXISTS byte_size INTEGER;
+
+CREATE INDEX IF NOT EXISTS idx_image_streams_device_timestamp
+    ON image_streams (device_id, timestamp DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_image_streams_unique
+    ON image_streams (device_id, timestamp);
 
 -- ── Indexes ────────────────────────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_entropy_device_id      ON entropy_records (device_id);

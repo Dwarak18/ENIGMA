@@ -5,7 +5,7 @@
 
 import { useState, useCallback } from 'react';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
 const PLACEHOLDER_PUBLIC_KEY = `04${'0'.repeat(128)}`;
 
 export const useEnigmaAPI = () => {
@@ -99,6 +99,19 @@ export const useEnigmaAPI = () => {
     [ensureDeviceRegistered, request]
   );
 
+  const captureImageStream = useCallback(
+    async (imageBase64, deviceId, espTime = null) =>
+      request('/api/v1/image-streams/capture', {
+        method: 'POST',
+        body: JSON.stringify({
+          device_id: deviceId,
+          image_base64: imageBase64,
+          esp_time: espTime,
+        }),
+      }),
+    [request]
+  );
+
   // Records endpoints
   const getRecords = useCallback(
     (deviceId = null, limit = 100) => {
@@ -142,6 +155,7 @@ export const useEnigmaAPI = () => {
     registerDevice,
     getDevice,
     captureEntropy,
+    captureImageStream,
     getRecords,
     getRecord,
     verifyRecord,

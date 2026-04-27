@@ -15,6 +15,11 @@ const pool           = require('../db/pool');
 const logger         = require('../logger');
 const crypto         = require('crypto');
 
+const PLACEHOLDER_PUBLIC_KEY = `04${'0'.repeat(128)}`;
+const SERVER_IMAGE_SECRET = process.env.IMAGE_ENCRYPTION_SECRET ||
+  process.env.SERVER_RANDOM_SEED ||
+  'enigma-local-image-secret-change-me';
+
 /* ── Chunk reassembly buffer ────────────────────────────────────────
  * Structure: Map<`${device_id}:${timestamp}`, { chunks, completed, timer }>
  * Holds incomplete chunk sets and auto-expires after timeout.
@@ -201,13 +206,139 @@ async function persistImageStream(deviceId, timestamp, encryptedData, iv) {
   }
 }
 
+async function ensureDevice(deviceId) {
+  await pool.query(`
+    INSERT INTO devices (device_id, public_key, first_seen, last_seen)
+    VALUES ($1, $2, NOW(), NOW())
+    ON CONFLICT (device_id)
+    DO UPDATE SET last_seen = NOW()
+  `, [deviceId, PLACEHOLDER_PUBLIC_KEY]);
+}
+
+function normalizeBase64Image(imageBase64) {
+  if (!imageBase64 || typeof imageBase64 !== 'string') {
+    const err = new Error('image_base64 is required');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  const match = imageBase64.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
+  if (match) {
+    return {
+      mimeType: match[1],
+      base64: match[2],
+      preview: imageBase64,
+    };
+  }
+
+  return {
+    mimeType: 'image/jpeg',
+    base64: imageBase64,
+    preview: `data:image/jpeg;base64,${imageBase64}`,
+  };
+}
+
+function encryptImageBytes(buffer, deviceId, timestamp, espTime) {
+  const keyMaterial = `${deviceId}|${timestamp}|${espTime}|${SERVER_IMAGE_SECRET}`;
+  const key = crypto.createHash('sha256').update(keyMaterial).digest();
+  const iv = crypto.randomBytes(16);
+
+  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
+
+  const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
+  const encryptedHash = crypto.createHash('sha256').update(encrypted).digest('hex');
+  const keyTimeHash = crypto.createHash('sha256')
+    .update(key)
+    .update(String(espTime))
+    .digest('hex');
+
+  return {
+    encrypted,
+    iv,
+    imageHash,
+    encryptedHash,
+    keyHash: crypto.createHash('sha256').update(key).digest('hex'),
+    keyTimeHash,
+  };
+}
+
+async function captureLaptopImage({ deviceId, imageBase64, espTime }) {
+  const device_id = deviceId || 'webcam-local-001';
+  const timestamp = Math.floor(Date.now() / 1000);
+  const resolvedEspTime = espTime || new Date(timestamp * 1000).toISOString();
+  const image = normalizeBase64Image(imageBase64);
+  const imageBuffer = Buffer.from(image.base64, 'base64');
+
+  if (imageBuffer.length === 0) {
+    const err = new Error('image_base64 decoded to an empty image');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  await ensureDevice(device_id);
+
+  const encrypted = encryptImageBytes(imageBuffer, device_id, timestamp, resolvedEspTime);
+
+  const res = await pool.query(`
+    INSERT INTO image_streams (
+      device_id,
+      timestamp,
+      encrypted_data,
+      iv,
+      image_hash,
+      encrypted_hash,
+      encryption_key_hash,
+      key_time_hash,
+      image_preview,
+      byte_size,
+      created_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+    ON CONFLICT (device_id, timestamp)
+    DO UPDATE SET
+      encrypted_data = EXCLUDED.encrypted_data,
+      iv = EXCLUDED.iv,
+      image_hash = EXCLUDED.image_hash,
+      encrypted_hash = EXCLUDED.encrypted_hash,
+      encryption_key_hash = EXCLUDED.encryption_key_hash,
+      key_time_hash = EXCLUDED.key_time_hash,
+      image_preview = EXCLUDED.image_preview,
+      byte_size = EXCLUDED.byte_size
+    RETURNING id, device_id, timestamp, encrypted_data, iv, image_hash,
+      encrypted_hash, encryption_key_hash, key_time_hash, image_preview,
+      byte_size, created_at
+  `, [
+    device_id,
+    timestamp,
+    encrypted.encrypted.toString('hex'),
+    encrypted.iv.toString('hex'),
+    encrypted.imageHash,
+    encrypted.encryptedHash,
+    encrypted.keyHash,
+    encrypted.keyTimeHash,
+    image.preview,
+    imageBuffer.length,
+  ]);
+
+  logger.info('Laptop camera image captured and encrypted', {
+    device_id,
+    timestamp,
+    byte_size: imageBuffer.length,
+    image_hash: encrypted.imageHash,
+  });
+
+  return res.rows[0];
+}
+
 /**
  * Fetch latest image stream for a device
  */
 async function getLatestImageStream(deviceId) {
   try {
     const res = await pool.query(`
-      SELECT timestamp, encrypted_data, iv, created_at
+      SELECT id, timestamp, encrypted_data, iv, image_hash, encrypted_hash,
+             encryption_key_hash, key_time_hash, image_preview, byte_size, created_at
       FROM image_streams
       WHERE device_id = $1
       ORDER BY timestamp DESC
@@ -227,7 +358,8 @@ async function getLatestImageStream(deviceId) {
 async function getImageStreamHistory(deviceId, limit = 50) {
   try {
     const res = await pool.query(`
-      SELECT timestamp, encrypted_data, iv, created_at
+      SELECT id, timestamp, encrypted_data, iv, image_hash, encrypted_hash,
+             encryption_key_hash, key_time_hash, image_preview, byte_size, created_at
       FROM image_streams
       WHERE device_id = $1
       ORDER BY timestamp DESC
@@ -243,6 +375,7 @@ async function getImageStreamHistory(deviceId, limit = 50) {
 
 module.exports = {
   processImageChunk,
+  captureLaptopImage,
   getLatestImageStream,
   getImageStreamHistory,
 };

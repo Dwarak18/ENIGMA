@@ -32,6 +32,22 @@ class CaptureRequest(BaseModel):
     device_id: str = Field(..., min_length=1, max_length=255)
 
 
+class FirmwareEntropyRequest(BaseModel):
+    """Schema for firmware/simulator entropy submission."""
+
+    device_id: str = Field(..., min_length=1, max_length=255)
+    timestamp: int
+    entropy_hash: str = Field(..., min_length=64, max_length=64)
+    signature: str = Field(..., min_length=128, max_length=128)
+    rtc_time: Optional[str] = Field(default=None)
+    aes_ciphertext: Optional[str] = None
+    aes_iv: Optional[str] = None
+    image_encrypted: Optional[str] = None
+    image_iv: Optional[str] = None
+    image_hash: Optional[str] = None
+    public_key: Optional[str] = None
+
+
 class EntropyRecordResponse(BaseModel):
     """Schema for entropy record response."""
 
@@ -39,8 +55,16 @@ class EntropyRecordResponse(BaseModel):
     device_id: str
     timestamp: int
     entropy_hash: str
+    signature: Optional[str] = None
     integrity_hash: str
+    aes_ciphertext: Optional[str] = None
+    aes_iv: Optional[str] = None
+    rtc_time: Optional[str] = None
+    image_bits: Optional[str] = None
+    image_encrypted: Optional[str] = None
+    image_iv: Optional[str] = None
     image_hash: Optional[str] = None
+    previous_hash: Optional[str] = None
     created_at: datetime
 
     class Config:

@@ -6,7 +6,6 @@
  * only the props they need.
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { io } from 'socket.io-client';
 
 import LiveClock          from './components/LiveClock.jsx';
 import DevicePairingBadge from './components/DevicePairingBadge.jsx';
@@ -54,7 +53,6 @@ export default function App() {
   // ── Backend connection state ──────────────────────────────────────
   const [backendUrl, setBackendUrl] = useState(getDefaultBackendUrl);
   const [wsStatus,   setWsStatus]   = useState('connecting');
-  const socketRef                   = useRef(null);
 
   // ── Live data ─────────────────────────────────────────────────────
   const [records,      setRecords]      = useState([]);
@@ -124,114 +122,20 @@ export default function App() {
     setLatestRecord(null);
     loadHistory();
     loadSystemStatus();
-
-    const socket = io(backendUrl, {
-      transports: ['websocket', 'polling'],
-      reconnectionDelay: 2000,
-      reconnectionDelayMax: 10000,
-    });
-    socketRef.current = socket;
-
-    socket.on('connect',       () => setWsStatus('connected'));
-    socket.on('disconnect',    () => setWsStatus('disconnected'));
-    socket.on('connect_error', () => setWsStatus('error'));
-
-    /* Realtime device connect / disconnect */
-    socket.on('device:status', ({ device_id, online, last_seen, rtc_time }) => {
-      // Store RTC time from the firmware when device connects
-      if (online && rtc_time) setFirmwareRtcTime(rtc_time);
-      setDeviceStates(prev => {
-        const wasOnline = prev[device_id]?.online;
-        const changed   = wasOnline !== online;
-        if (changed) {
-          const id = `${device_id}-${Date.now()}`;
-          setToasts(q => [
-            { id, device_id, online, rtc_time: rtc_time || null, ts: Date.now() },
-            ...q.slice(0, 4),
-          ]);
-          // Auto-dismiss after 5 s
-          setTimeout(() => setToasts(q => q.filter(t => t.id !== id)), 5000);
-        }
-        return {
-          ...prev,
-          [device_id]: {
-            online,
-            last_seen,
-            rtc_time: rtc_time || prev[device_id]?.rtc_time || null,
-          },
-        };
-      });
-      /* Reflect into systemStatus.devices so all pages stay in sync */
-      setSystemStatus(prev => {
-        if (!prev?.devices) return prev;
-        return {
-          ...prev,
-          devices: prev.devices.map(d =>
-            d.device_id === device_id
-              ? { ...d, online, last_seen: last_seen || d.last_seen }
-              : d
-          ),
-          activeDevices: prev.devices
-            .map(d => d.device_id === device_id ? { ...d, online } : d)
-            .filter(d => d.online).length,
-        };
-      });
-    });
-
-    socket.on('entropy:new', (rec) => {
-      setRecords((prev) => [rec, ...prev].slice(0, 100));
-      setLatestRecord(rec);
-      if (rec.rtc_time) setFirmwareRtcTime(rec.rtc_time);
-      setCurrentFrame((f) => f + 1);
-      // Keep per-device rtc_time fresh so the sidebar badge and Time page stay live
-      if (rec.device_id && rec.rtc_time) {
-        setDeviceStates(prev => ({
-          ...prev,
-          [rec.device_id]: {
-            ...(prev[rec.device_id] || {}),
-            online:   true,
-            rtc_time: rec.rtc_time,
-          },
-        }));
-      }
-    });
-
-    socket.on('entropy:history', (hist) => {
-      if (hist?.length) { setRecords(hist); setLatestRecord(hist[0]); }
-    });
-
-    socket.on('system:stats', (data) => {
-      setSystemStatus((prev) => ({ ...(prev || {}), ...data }));
-      if (data.trng) setTrngStatus(data.trng);
-    });
-
-    /* TRNG pipeline state changes (per-device or full snapshot) */
-    socket.on('trng:state', (data) => {
-      if (data.pipeline) {
-        setTrngStatus({ state: data.state, pipeline: data.pipeline });
-      } else {
-        setTrngStatus(prev => {
-          const pipeline = prev.pipeline
-            .map(d => d.device_id === data.device_id ? { ...d, state: data.state } : d);
-          if (!pipeline.some(d => d.device_id === data.device_id)) {
-            pipeline.push({ device_id: data.device_id, state: data.state });
-          }
-          const overall = pipeline.some(d => d.state === 'active') ? 'active'
-            : pipeline.some(d => d.state === 'suspended') ? 'suspended'
-            : 'inactive';
-          return { state: overall, pipeline };
-        });
-      }
-    });
-
-    socket.on('entropy:lookup_result', (res) => {
-      setVerifyResult(res.ok ? { found: true, record: res.record } : { found: false });
-      setVerifying(false);
-    });
-
-    socket.emit('entropy:fetch_history', { limit: 100 });
-    return () => socket.disconnect();
+    return () => {};
   }, [backendUrl, loadHistory, loadSystemStatus]);
+
+  useEffect(() => {
+    const refresh = () => {
+      Promise.all([loadHistory(), loadSystemStatus()])
+        .then(() => setWsStatus('connected'))
+        .catch(() => setWsStatus('error'));
+    };
+
+    refresh();
+    const interval = setInterval(refresh, 5000);
+    return () => clearInterval(interval);
+  }, [loadHistory, loadSystemStatus]);
 
   // ── Countdown timer ───────────────────────────────────────────────
   useEffect(() => {
@@ -246,17 +150,8 @@ export default function App() {
     setVerifying(true);
     const local = records.find((r) => r.entropy_hash === query || r.id === query);
     if (local) { setVerifyResult({ found: true, record: local }); setVerifying(false); return; }
-    const sock = socketRef.current;
-    if (sock?.connected) {
-      sock.emit('entropy:lookup', { entropy_hash: query });
-      setTimeout(() => {
-        setVerifying(false);
-        setVerifyResult((prev) => prev || { found: false });
-      }, 5000);
-    } else {
-      setVerifyResult({ found: false });
-      setVerifying(false);
-    }
+    setVerifyResult({ found: false });
+    setVerifying(false);
   }, [records]);
 
   // ── Render ────────────────────────────────────────────────────────

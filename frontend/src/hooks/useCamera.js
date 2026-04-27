@@ -13,6 +13,21 @@ export const useCamera = () => {
   const [selectedCameraId, setSelectedCameraId] = useState('');
   const videoRef = useRef(null);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !stream) return;
+
+    video.srcObject = stream;
+    const play = async () => {
+      try {
+        await video.play();
+      } catch (err) {
+        setError(`Camera preview error: ${err.message}`);
+      }
+    };
+    play();
+  }, [stream]);
+
   const refreshCameraList = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) {
       return;
@@ -27,10 +42,6 @@ export const useCamera = () => {
       }));
 
     setAvailableCameras(cameras);
-
-    if (cameras.length > 0 && !selectedCameraId) {
-      setSelectedCameraId(cameras[0].id);
-    }
   }, [selectedCameraId]);
 
   useEffect(() => {
@@ -63,7 +74,11 @@ export const useCamera = () => {
                 width: { ideal: 1280 },
                 height: { ideal: 720 },
               }
-            : true,
+            : {
+                facingMode: { ideal: 'user' },
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+              },
           audio: false,
         };
 
@@ -73,6 +88,7 @@ export const useCamera = () => {
 
       if (videoRef.current) {
         videoRef.current.srcObject = mediaStream;
+        await videoRef.current.play();
       }
 
       await refreshCameraList();
@@ -126,12 +142,20 @@ export const useCamera = () => {
     canvas.width = videoRef.current.videoWidth;
     canvas.height = videoRef.current.videoHeight;
 
+    if (!canvas.width || !canvas.height) {
+      throw new Error('Camera video is not ready yet');
+    }
+
     ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
 
     // Convert to JPEG base64
     return new Promise((resolve, reject) => {
       canvas.toBlob(
         (blob) => {
+          if (!blob) {
+            reject(new Error('Camera frame capture failed'));
+            return;
+          }
           const reader = new FileReader();
           reader.onload = () => {
             // Remove "data:image/jpeg;base64," prefix

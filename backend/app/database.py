@@ -1,6 +1,6 @@
 """Database connection and session management."""
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.ext.declarative import declarative_base
 from app.config import get_settings
@@ -31,3 +31,8 @@ def get_db() -> Session:
 def init_db():
     """Initialize database tables."""
     Base.metadata.create_all(bind=engine)
+
+    # Keep older volumes compatible with the current ORM model.
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS integrity_hash VARCHAR(64)"))
+        conn.execute(text("ALTER TABLE entropy_records ADD COLUMN IF NOT EXISTS previous_hash VARCHAR(64)"))

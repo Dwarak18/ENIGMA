@@ -12,15 +12,15 @@
 #define DEVICE_ID              "esp32-001"
 
 /* ── Wi-Fi Credentials ───────────────────────────────── */
-#define WIFI_SSID              "LAPTOP-TGOIA7MG"       /* ← fill in your WiFi name */
-#define WIFI_PASSWORD          "31053105"   /* ← fill in your WiFi password */
+#define WIFI_SSID              "Bala"       /* ← fill in your WiFi name */
+#define WIFI_PASSWORD          "v2i4d0h3u"   /* ← fill in your WiFi password */
 #define WIFI_MAX_RETRY         10
 
 /* ── Backend Endpoint ────────────────────────────────── */
-/* Your PC's WiFi IP – ESP32 posts to nginx on port 80   */
-#define BACKEND_HOST           "http://172.20.137.1"
+/* Laptop Wi-Fi IP; ESP32 posts directly to the Node backend on port 3000. */
+#define BACKEND_HOST           "http://192.168.10.8:3000"
 #define BACKEND_ENTROPY_PATH   "/api/v1/entropy"
-#define BACKEND_WEBSOCKET_URI  "ws://172.20.137.1:3000"
+#define BACKEND_WEBSOCKET_URI  "ws://192.168.10.8:3000"
 #define HTTP_TIMEOUT_MS        10000
 
 /* ── Timing ──────────────────────────────────────────── */

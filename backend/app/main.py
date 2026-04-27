@@ -3,8 +3,9 @@
 from fastapi import FastAPI, Depends, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, timedelta
 import time
+import os
 from uuid import UUID
 
 from app.config import get_settings
@@ -14,6 +15,7 @@ from app.schemas import (
     DeviceCreate,
     DeviceResponse,
     CaptureRequest,
+    FirmwareEntropyRequest,
     EntropyRecordResponse,
     VerificationRequest,
     VerificationResponse,
@@ -27,6 +29,10 @@ from app.services.crypto import (
 )
 
 settings = get_settings()
+PLACEHOLDER_PUBLIC_KEY = f"04{'0' * 128}"
+STARTUP_TS = time.time()
+
+_device_state: dict[str, dict[str, object]] = {}
 
 app = FastAPI(
     title=settings.APP_NAME,
@@ -59,6 +65,101 @@ async def health_check():
         "status": "healthy",
         "timestamp": datetime.utcnow().isoformat(),
         "service": settings.APP_NAME,
+    }
+
+
+def _ensure_device(device_id: str, db: Session, public_key: str | None = None) -> Device:
+    device = db.query(Device).filter(Device.device_id == device_id).first()
+    if device:
+        if public_key and device.public_key != public_key:
+            device.public_key = public_key
+        device.last_seen = datetime.utcnow()
+        db.commit()
+        db.refresh(device)
+        return device
+
+    new_device = Device(
+        device_id=device_id,
+        public_key=public_key or PLACEHOLDER_PUBLIC_KEY,
+        first_seen=datetime.utcnow(),
+        last_seen=datetime.utcnow(),
+    )
+    db.add(new_device)
+    db.commit()
+    db.refresh(new_device)
+    return new_device
+
+
+def _serialize_record(record: EntropyRecord) -> dict:
+    return {
+        "id": record.id,
+        "device_id": record.device_id,
+        "timestamp": int(record.timestamp),
+        "entropy_hash": record.entropy_hash,
+        "signature": record.signature,
+        "integrity_hash": record.integrity_hash,
+        "aes_ciphertext": record.aes_ciphertext,
+        "aes_iv": record.aes_iv,
+        "rtc_time": record.rtc_time,
+        "image_bits": record.image_bits,
+        "image_encrypted": record.image_encrypted,
+        "image_iv": record.image_iv,
+        "image_hash": record.image_hash,
+        "previous_hash": record.previous_hash,
+        "created_at": record.created_at,
+    }
+
+
+def _build_system_status(db: Session) -> dict:
+    total_devices = db.query(Device).count()
+    total_records = db.query(EntropyRecord).count()
+
+    recent_rate = db.query(EntropyRecord).filter(
+        EntropyRecord.created_at > datetime.utcnow() - timedelta(seconds=60)
+    ).count()
+
+    devices = []
+    for device in db.query(Device).order_by(Device.last_seen.desc()).all():
+        record_count = db.query(EntropyRecord).filter(
+            EntropyRecord.device_id == device.device_id
+        ).count()
+        live_state = _device_state.get(device.device_id, {})
+        devices.append({
+            "device_id": device.device_id,
+            "last_seen": device.last_seen,
+            "first_seen": device.first_seen,
+            "record_count": record_count,
+            "online": bool(live_state.get("online", False)),
+            "has_key": bool(device.public_key),
+        })
+
+    recent_records = [
+        _serialize_record(record)
+        for record in db.query(EntropyRecord).order_by(EntropyRecord.created_at.desc()).limit(5).all()
+    ]
+
+    return {
+        "ok": True,
+        "data": {
+            "uptime": int(time.time() - STARTUP_TS),
+            "totalRecords": total_records,
+            "verifiedRecords": db.query(EntropyRecord).filter(EntropyRecord.signature.isnot(None)).count(),
+            "recentRate": recent_rate,
+            "activeDevices": len([d for d in devices if d["online"]]),
+            "devices": devices,
+            "recentRecords": recent_records,
+            "system": {
+                "platform": os.name,
+                "nodeVersion": settings.APP_VERSION,
+                "memory": {
+                    "usedMB": 0,
+                    "totalMB": 0,
+                    "rss": 0,
+                },
+                "load": 0,
+                "cpuCount": 0,
+            },
+        },
     }
 
 
@@ -225,6 +326,113 @@ async def capture_entropy(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Processing error: {str(e)}",
         )
+
+
+@app.post("/api/v1/entropy", response_model=EntropyRecordResponse)
+async def post_firmware_entropy(
+    request: FirmwareEntropyRequest,
+    db: Session = Depends(get_db),
+):
+    """Accept entropy submissions from firmware / simulator."""
+    try:
+        _ensure_device(request.device_id, db, request.public_key)
+
+        last_record = (
+            db.query(EntropyRecord)
+            .filter(EntropyRecord.device_id == request.device_id)
+            .order_by(EntropyRecord.created_at.desc())
+            .first()
+        )
+        previous_hash = last_record.integrity_hash if last_record else None
+
+        aes_key = derive_key(request.device_id, request.timestamp)
+        integrity_hash = generate_integrity_hash(
+            request.aes_ciphertext or "",
+            request.timestamp,
+            aes_key,
+            previous_hash,
+        )
+
+        record = EntropyRecord(
+            device_id=request.device_id,
+            timestamp=request.timestamp,
+            entropy_hash=request.entropy_hash,
+            signature=request.signature,
+            aes_ciphertext=request.aes_ciphertext,
+            aes_iv=request.aes_iv,
+            rtc_time=request.rtc_time,
+            image_encrypted=request.image_encrypted,
+            image_iv=request.image_iv,
+            image_hash=request.image_hash,
+            integrity_hash=integrity_hash,
+            previous_hash=previous_hash,
+        )
+
+        db.add(record)
+        db.commit()
+        db.refresh(record)
+
+        _device_state[request.device_id] = {
+            "online": True,
+            "rtc_time": request.rtc_time,
+            "last_seen": datetime.utcnow(),
+        }
+
+        return record
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Firmware ingest error: {str(e)}",
+        )
+
+
+@app.get("/api/v1/entropy/history", response_model=list[EntropyRecordResponse])
+async def firmware_history(limit: int = 100, db: Session = Depends(get_db)):
+    records = db.query(EntropyRecord).order_by(EntropyRecord.created_at.desc()).limit(limit).all()
+    return records
+
+
+@app.get("/api/v1/entropy/latest", response_model=EntropyRecordResponse)
+async def firmware_latest(db: Session = Depends(get_db)):
+    record = db.query(EntropyRecord).order_by(EntropyRecord.created_at.desc()).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Record not found")
+    return record
+
+
+@app.post("/api/v1/system/device-status")
+async def firmware_device_status(payload: dict, db: Session = Depends(get_db)):
+    device_id = payload.get("device_id")
+    online = payload.get("online")
+    com_port = payload.get("com_port")
+    rtc_time = payload.get("rtc_time")
+
+    if not device_id or not isinstance(online, bool):
+        raise HTTPException(status_code=400, detail="device_id and online are required")
+
+    _ensure_device(device_id, db)
+    _device_state[device_id] = {
+        "online": online,
+        "rtc_time": rtc_time,
+        "com_port": com_port,
+        "last_seen": datetime.utcnow(),
+    }
+    return {"ok": True, "device_id": device_id, "online": online}
+
+
+@app.get("/api/v1/system/status")
+async def firmware_system_status(db: Session = Depends(get_db)):
+    return _build_system_status(db)
+
+
+@app.get("/api/v1/system/uptime")
+async def firmware_uptime():
+    sec = int(time.time() - STARTUP_TS)
+    h = sec // 3600
+    m = (sec % 3600) // 60
+    s = sec % 60
+    return {"ok": True, "data": {"uptimeSeconds": sec, "formatted": f"{h}h {m}m {s}s"}}
 
 
 # ============================================================================
