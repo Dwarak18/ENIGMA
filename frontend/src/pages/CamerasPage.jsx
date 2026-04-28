@@ -7,13 +7,13 @@ import { useEffect, useRef, useState } from 'react';
 import useCamera from '../hooks/useCamera';
 import useEnigmaAPI from '../hooks/useEnigmaAPI';
 import { useLatestImageStream } from '../hooks/useImageStream';
-import StatusBadge from '../components/StatusBadge';
-import EntropyCard from '../components/EntropyCard';
+import StatusBadge from '../components/StatusBadge.jsx';
+import EntropyCard from '../components/EntropyCard.jsx';
 
-const CAPTURE_INTERVAL_SECONDS = 20;
+const CAPTURE_INTERVAL_SECONDS = 10;
 
 export default function CamerasPage() {
-  const [deviceId, setDeviceId] = useState('webcam-local-001');
+  const [deviceId, setDeviceId] = useState('ENIGMA');
   const [captureStatus, setCaptureStatus] = useState('idle');
   const [captureError, setCaptureError] = useState(null);
   const [lastCapture, setLastCapture] = useState(null);
@@ -24,6 +24,9 @@ export default function CamerasPage() {
     videoRef,
     error: cameraError,
     isActive,
+    availableCameras,
+    selectedCameraId,
+    selectCamera,
     startCamera,
     stopCamera,
     captureFrame,
@@ -87,7 +90,7 @@ export default function CamerasPage() {
       <div className="bg-white rounded-lg border border-gray-200 p-6 shadow-sm text-gray-900">
         <h2 className="text-xl font-semibold mb-4">Laptop Camera Capture</h2>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Device ID</label>
             <input
@@ -99,15 +102,43 @@ export default function CamerasPage() {
           </div>
 
           <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Select Camera</label>
+            <select
+              value={selectedCameraId}
+              onChange={(e) => selectCamera(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="">Default User Camera</option>
+              {availableCameras.map((cam) => (
+                <option key={cam.id} value={cam.id}>
+                  {cam.label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">Interval</label>
-            <div className="px-3 py-2 border border-gray-300 rounded-lg bg-gray-50">
-              Every {CAPTURE_INTERVAL_SECONDS} seconds
+            <div className="px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-center flex items-center justify-center">
+              Every {CAPTURE_INTERVAL_SECONDS}s
             </div>
           </div>
 
-          <div className="flex items-end gap-3">
-            <StatusBadge status={isActive ? 'connected' : 'disconnected'} />
-            <span className="text-sm text-gray-600">Next capture in {secondsRemaining}s</span>
+          <div className="flex flex-col gap-2 pb-2 justify-end">
+            <div className="flex items-center gap-3">
+              <StatusBadge status={isActive ? 'connected' : 'disconnected'} />
+              <span className="text-xs text-gray-600">
+                {isActive ? `Next capture in ${secondsRemaining}s` : 'Waiting for permission'}
+              </span>
+            </div>
+            {!isActive && (
+              <button
+                onClick={() => startCamera().catch(err => setCaptureError(err.message))}
+                className="w-full bg-blue-100 hover:bg-blue-200 text-blue-700 text-xs font-semibold py-2 px-4 rounded transition"
+              >
+                Connect Camera
+              </button>
+            )}
           </div>
         </div>
       </div>

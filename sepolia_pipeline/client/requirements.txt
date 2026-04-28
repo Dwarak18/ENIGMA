@@ -1,0 +1,4 @@
+opencv-python
+pycryptodome
+requests
+numpy

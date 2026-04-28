@@ -149,4 +149,22 @@ router.get('/trng-status', (_req, res) => {
   const { getTRNGStatus } = require('../services/entropyService');
   return res.json({ ok: true, data: getTRNGStatus() });
 });
+/* ── GET /api/v1/system/blockchain-config ───────────────────────────── */
+router.get('/blockchain-config', (_req, res) => {
+  const { blockchain } = require('../config');
+  return res.json({
+    ok: true,
+    data: {
+      contractAddress: blockchain.contractAddress,
+      enabled: blockchain.enabled,
+      // Shared ABI for frontend
+      abi: [
+        'function getRecordCount() external view returns (uint256)',
+        'function records(string) external view returns (string deviceId, uint256 timestamp, string entropyHash, uint256 blockNumber)',
+        'event RecordAnchored(string indexed deviceId, uint256 indexed timestamp, string entropyHash, uint256 blockNumber)'
+      ]
+    }
+  });
+});
+
 module.exports = router;

@@ -93,6 +93,7 @@ ESP32_USB_IDS: list[tuple[str, str]] = [
     ('303a', '0002'),   # Espressif ESP32 native USB
     ('10c4', 'ea60'),   # Silicon Labs CP2102 / CP2102N / CP2109
     ('1a86', '7523'),   # QinHeng CH340
+    ('1a86', '55d3'),   # QinHeng CH343 (User Device)
     ('1a86', '55d4'),   # QinHeng CH343P
     ('1a86', '7522'),   # QinHeng CH340K
     ('0403', '6001'),   # FTDI FT232RL
@@ -260,7 +261,7 @@ def udev_watcher() -> None:
              len(ESP32_USB_IDS))
 
     # ── Startup scan ──────────────────────────────────────────────────────────
-    for dev in context.list_devices(subsystem='tty', ID_BUS='usb'):
+    for dev in context.list_devices(subsystem='tty'):
         vid  = dev.get('ID_VENDOR_ID', '')
         pid  = dev.get('ID_MODEL_ID',  '')
         desc = f"{dev.get('ID_MODEL', '')} {dev.get('ID_VENDOR', '')}"

@@ -1,9 +1,11 @@
 /**
  * src/pages/BlockchainPage.jsx
- * Blockchain anchor queue and confirmed records.
+ * Real-time Sepolia Blockchain Anchoring dashboard with Metamask integration.
  */
+import { useState, useEffect, useCallback } from 'react';
+import { ethers } from 'ethers';
 import StatusBadge from '../components/StatusBadge.jsx';
-import { formatHash } from '../utils.js';
+import { formatHash, getDefaultBackendUrl } from '../utils.js';
 
 /** Format a UNIX epoch (seconds) to "YYYY-MM-DD HH:MM:SS UTC" */
 function fmtEpoch(ts) {
@@ -12,141 +14,191 @@ function fmtEpoch(ts) {
 }
 
 export default function BlockchainPage({ records, latestRecord, firmwareRtcTime }) {
-  const queue    = records.slice(0, 5);
-  const anchored = records.slice(5);
+  const [account, setAccount] = useState(null);
+  const [network, setNetwork] = useState(null);
+  const [contractConfig, setContractConfig] = useState(null);
+  const [anchoredRecords, setAnchoredRecords] = useState([]);
+  const [onChainCount, setOnChainCount] = useState('—');
+  const [isConnecting, setIsConnecting] = useState(false);
+
+  const backendUrl = getDefaultBackendUrl();
+
+  // 1. Fetch backend blockchain config and real anchored records
+  const refreshAnchoredData = useCallback(async () => {
+    try {
+      // Fetch anchored records from our database (ones confirmed by backend)
+      const r = await fetch(`${backendUrl}/api/v1/entropy/anchored`);
+      const b = await r.json();
+      if (b.ok) setAnchoredRecords(b.data);
+
+      // Fetch contract config
+      const cr = await fetch(`${backendUrl}/api/v1/system/blockchain-config`);
+      const cb = await cr.json();
+      if (cb.ok) setContractConfig(cb.data);
+    } catch (err) {
+      console.error('Failed to fetch anchored data', err);
+    }
+  }, [backendUrl]);
+
+  useEffect(() => {
+    refreshAnchoredData();
+    const interval = setInterval(refreshAnchoredData, 10000);
+    return () => clearInterval(interval);
+  }, [refreshAnchoredData]);
+
+  // 2. Metamask Logic
+  const connectWallet = async () => {
+    if (!window.ethereum) {
+      alert('Metamask not detected. Please install it to use this feature.');
+      return;
+    }
+    try {
+      setIsConnecting(true);
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const accounts = await provider.send("eth_requestAccounts", []);
+      const net = await provider.getNetwork();
+      
+      setAccount(accounts[0]);
+      setNetwork(net);
+
+      // If connected to correct contract, fetch on-chain count directly
+      if (contractConfig?.contractAddress) {
+        const contract = new ethers.Contract(contractConfig.contractAddress, contractConfig.abi, provider);
+        const count = await contract.getRecordCount();
+        setOnChainCount(count.toString());
+      }
+    } catch (err) {
+      console.error('Wallet connection failed', err);
+    } finally {
+      setIsConnecting(false);
+    }
+  };
 
   return (
     <div className="space-y-6">
 
-      {/* ── Firmware Time Confirmation ────────────────────────────────── */}
-      <div className="card">
-        <div style={{ fontSize: '11px', color: '#71717a', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.1em' }}>
-          Firmware Time Confirmation
-        </div>
-        <div className="grid grid-cols-3 gap-6">
+      {/* ── Metamask Connection Panel ────────────────────────────────── */}
+      <div className="card" style={{ borderLeft: account ? '4px solid #10b981' : '4px solid #3b82f6' }}>
+        <div className="flex items-center justify-between">
           <div>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>DS3231 RTC Time</div>
-            <div style={{ fontSize: '20px', fontWeight: 'bold', color: firmwareRtcTime ? '#10b981' : '#52525b', fontFamily: 'monospace' }}>
-              {firmwareRtcTime || '—'}
+            <h2 style={{ fontSize: '14px', fontWeight: 'bold', color: '#fafafa', marginBottom: '4px' }}>
+              BLOCKCHAIN WALLET (METAMASK)
+            </h2>
+            <p style={{ fontSize: '11px', color: '#71717a' }}>
+              Connect to Sepolia Testnet to verify anchors directly on-chain.
+            </p>
+          </div>
+          {!account ? (
+            <button 
+              onClick={connectWallet}
+              disabled={isConnecting}
+              style={{
+                background: '#3b82f6', color: 'white', border: 'none', padding: '8px 16px',
+                borderRadius: '2px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer'
+              }}
+            >
+              {isConnecting ? 'CONNECTING...' : 'CONNECT WALLET'}
+            </button>
+          ) : (
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#10b981' }}>CONNECTED</div>
+              <div style={{ fontSize: '10px', color: '#71717a', fontFamily: 'monospace' }}>
+                {account.slice(0, 6)}...{account.slice(-4)} | {network?.name?.toUpperCase()}
+              </div>
             </div>
-            <div style={{ fontSize: '10px', color: '#52525b', marginTop: '4px' }}>
-              {firmwareRtcTime ? 'Hardware clock confirmed' : 'Awaiting device connection'}
-            </div>
-          </div>
-          <div>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>Last Session Datetime</div>
-            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#a1a1aa', fontFamily: 'monospace' }}>
-              {latestRecord ? fmtEpoch(latestRecord.timestamp) : '—'}
-            </div>
-            <div style={{ fontSize: '10px', color: '#52525b', marginTop: '4px' }}>Used in entropy hash derivation</div>
-          </div>
-          <div>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>Hash Derivation</div>
-            <div style={{ fontSize: '10px', color: '#a1a1aa', fontFamily: 'monospace', lineHeight: '1.6' }}>
-              <span style={{ color: '#3b82f6' }}>SHA-256</span>
-              {'(AES_key || datetime)'}
-            </div>
-            <div style={{ fontSize: '10px', color: '#52525b', marginTop: '4px' }}>Entropy encryption key + RTC datetime</div>
-          </div>
-        </div>
-
-        {latestRecord?.entropy_hash && (
-          <div style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #27272a' }}>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>Latest Entropy Hash (anchored to blockchain)</div>
-            <code style={{ fontSize: '12px', color: '#10b981', wordBreak: 'break-all' }}>
-              {latestRecord.entropy_hash}
-            </code>
-          </div>
-        )}
-      </div>
-
-      {/* ── Summary ───────────────────────────────────────────────────── */}
-      <div className="card">
-        <div className="grid grid-cols-4 gap-6">
-          <div>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px', textTransform: 'uppercase' }}>Network</div>
-            <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#3b82f6' }}>Sepolia Testnet</div>
-            <div style={{ fontSize: '10px', color: '#71717a' }}>Chain ID: 11155111</div>
-          </div>
-          <div>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px', textTransform: 'uppercase' }}>Anchored</div>
-            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#10b981' }}>{anchored.length}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px', textTransform: 'uppercase' }}>Pending</div>
-            <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f59e0b' }}>{queue.length}</div>
-          </div>
-          <div>
-            <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '8px', textTransform: 'uppercase' }}>Anchor Rate</div>
-            <div style={{ fontSize: '24px', fontWeight: 'bold' }}>
-              {records.length > 0 ? `${((anchored.length / records.length) * 100).toFixed(1)}%` : '—'}
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
-      {/* ── Info banner ───────────────────────────────────────────────── */}
-      <div style={{ padding: '14px 18px', borderRadius: '2px', background: 'rgba(37,99,235,.1)', border: '1px solid rgba(37,99,235,.3)', fontSize: '12px', color: '#93c5fd' }}>
-        <strong>⬡ Blockchain Anchoring</strong> — Each validated entropy hash is derived as{' '}
-        <code style={{ background: 'rgba(255,255,255,0.05)', padding: '1px 5px', borderRadius: '2px' }}>
-          SHA-256(AES_encryption_key || "YYYY-MM-DD HH:MM:SS")
-        </code>{' '}
-        using the hardware AES-256 key and the DS3231 RTC datetime, then anchored to Ethereum as an
-        immutable record. Records older than the newest 5 are marked as confirmed (simulated).
-        Production systems will anchor via a real contract transaction.
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Firmware Sync */}
+        <div className="card col-span-1">
+          <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '12px', textTransform: 'uppercase' }}>Hardware Time Sync</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: firmwareRtcTime ? '#10b981' : '#52525b', fontFamily: 'monospace' }}>
+            {firmwareRtcTime || '—'}
+          </div>
+          <div style={{ fontSize: '10px', color: '#52525b', marginTop: '4px' }}>
+            {firmwareRtcTime ? 'NTP/SNTP Synchronized' : 'Waiting for hardware...'}
+          </div>
+        </div>
+
+        {/* Contract Info */}
+        <div className="card col-span-2">
+          <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '12px', textTransform: 'uppercase' }}>Anchor Contract (Sepolia)</div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#3b82f6', fontFamily: 'monospace', wordBreak: 'break-all' }}>
+                {contractConfig?.contractAddress || 'Not Configured'}
+              </div>
+              <div style={{ fontSize: '10px', color: '#71717a', marginTop: '4px' }}>
+                {contractConfig?.enabled ? '✓ Backend automated anchoring active' : '✗ Anchoring disabled in backend config'}
+              </div>
+            </div>
+            <div style={{ textAlign: 'center', padding: '0 20px', borderLeft: '1px solid #27272a' }}>
+              <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '4px' }}>TOTAL ON-CHAIN</div>
+              <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#fafafa' }}>{onChainCount}</div>
+            </div>
+          </div>
+        </div>
       </div>
 
-      {/* ── Pending queue ─────────────────────────────────────────────── */}
-      {queue.length > 0 && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div style={{ padding: '16px', borderBottom: '1px solid #27272a', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <StatusBadge status="pending" /><span>Pending Anchor Queue</span>
-          </div>
-          <table>
-            <thead><tr><th>Record ID</th><th>Entropy Hash</th><th>Device</th><th>Datetime (UTC)</th><th>Status</th></tr></thead>
-            <tbody>
-              {queue.map((r) => (
-                <tr key={r.id}>
-                  <td><code style={{ fontSize: '11px', color: '#71717a' }}>{r.id ? r.id.slice(0, 14) + '…' : '—'}</code></td>
-                  <td><code style={{ fontSize: '12px', color: '#10b981' }}>{formatHash(r.entropy_hash, 10)}</code></td>
-                  <td style={{ color: '#a1a1aa' }}>{r.device_id}</td>
-                  <td style={{ fontSize: '11px', color: '#71717a', fontFamily: 'monospace' }}>{fmtEpoch(r.timestamp)}</td>
-                  <td><StatusBadge status="pending" /></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* ── Anchored records ──────────────────────────────────────────── */}
+      {/* ── Anchored Records Table ────────────────────────────────────── */}
       <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
         <div style={{ padding: '16px', borderBottom: '1px solid #27272a', fontSize: '14px', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <StatusBadge status="confirmed" /><span>Anchored Records</span>
+          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#10b981', boxShadow: '0 0 8px #10b981' }} />
+          <span>VERIFIED ON-CHAIN ANCHORS</span>
         </div>
-        {anchored.length === 0 ? (
-          <div style={{ textAlign: 'center', padding: '40px', color: '#52525b', fontSize: '13px' }}>
-            No anchored records yet
+        {anchoredRecords.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '60px', color: '#52525b' }}>
+            <div style={{ fontSize: '24px', marginBottom: '12px' }}>⬡</div>
+            <div style={{ fontSize: '13px' }}>No records confirmed on Sepolia yet.</div>
+            <div style={{ fontSize: '11px', marginTop: '8px' }}>Ensure your backend has a PRIVATE_KEY and RPC_URL configured.</div>
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table>
-              <thead><tr><th>Entropy Hash</th><th>Datetime (UTC)</th><th>Simulated TX Hash</th><th>Status</th></tr></thead>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ background: 'rgba(0,0,0,0.2)' }}>
+                <tr style={{ textAlign: 'left', fontSize: '10px', color: '#71717a' }}>
+                  <th style={{ padding: '12px 16px' }}>BLOCKCHAIN TX</th>
+                  <th style={{ padding: '12px 16px' }}>ENTROPY HASH</th>
+                  <th style={{ padding: '12px 16px' }}>HARDWARE TIME</th>
+                  <th style={{ padding: '12px 16px' }}>STATUS</th>
+                </tr>
+              </thead>
               <tbody>
-                {anchored.slice(0, 15).map((r) => (
-                  <tr key={r.id}>
-                    <td><code style={{ fontSize: '12px', color: '#10b981' }}>{formatHash(r.entropy_hash, 12)}</code></td>
-                    <td style={{ fontSize: '11px', color: '#71717a', fontFamily: 'monospace' }}>{fmtEpoch(r.timestamp)}</td>
-                    <td><code style={{ fontSize: '12px', color: '#3b82f6' }}>
-                      {r.id ? formatHash('0x' + r.id.replace(/-/g, '') + (r.entropy_hash || '').slice(2, 10), 16) : '—'}
-                    </code></td>
-                    <td><StatusBadge status="confirmed" /></td>
+                {anchoredRecords.map((r, idx) => (
+                  <tr key={idx} style={{ borderTop: '1px solid #27272a', fontSize: '12px' }}>
+                    <td style={{ padding: '12px 16px' }}>
+                      <a 
+                        href={`https://sepolia.etherscan.io/tx/${r.tx_hash}`} 
+                        target="_blank" 
+                        rel="noreferrer"
+                        style={{ color: '#3b82f6', fontFamily: 'monospace', textDecoration: 'none' }}
+                      >
+                        {formatHash(r.tx_hash, 8)}
+                      </a>
+                    </td>
+                    <td style={{ padding: '12px 16px', fontFamily: 'monospace', color: '#10b981' }}>
+                      {formatHash(r.entropy_hash, 12)}
+                    </td>
+                    <td style={{ padding: '12px 16px', color: '#a1a1aa' }}>
+                      {new Date(r.confirmed_at).toLocaleString()}
+                    </td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <StatusBadge status="confirmed" />
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
+      </div>
+
+      {/* Info banner */}
+      <div style={{ padding: '14px 18px', borderRadius: '2px', background: 'rgba(16,185,129,.05)', border: '1px solid rgba(16,185,129,.2)', fontSize: '12px', color: '#a7f3d0' }}>
+        <strong>⬡ Immutable Anchoring Active</strong> — This system automatically anchors every hardware record to the Ethereum Sepolia Testnet. 
+        Confirmation happens once the transaction is included in a block. You can click any transaction ID to verify the proof on Etherscan.
       </div>
     </div>
   );

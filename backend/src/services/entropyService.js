@@ -24,7 +24,7 @@ let _io = null;
  * After DEVICE_WATCHDOG_MS with no new post the device is considered
  * offline and a `device:status` event is broadcast to all WS clients.
  */
-const DEVICE_WATCHDOG_MS = 35_000;   // 3.5× the 10s posting interval
+const DEVICE_WATCHDOG_MS = 15_000;   // 1.5× the 10s posting interval
 const _deviceTimers = new Map();     // device_id → NodeJS.Timeout
 const _deviceOnline = new Map();     // device_id → boolean
 
@@ -339,4 +339,55 @@ async function getHistory(limit = 100) {
   return res.rows;
 }
 
-module.exports = { processEntropy, getLatest, getHistory, setIO, getDeviceStatuses, forceDeviceStatus, getTRNGStatus };
+/**
+ * Fetch a single record by ID.
+ */
+async function getRecordById(id) {
+  const res = await pool.query(`
+    SELECT id, device_id, timestamp, entropy_hash, signature,
+           aes_ciphertext, aes_iv, rtc_time,
+           image_encrypted, image_iv, image_hash,
+           created_at
+    FROM entropy_records
+    WHERE id = $1
+  `, [id]);
+  return res.rows[0] || null;
+}
+
+/**
+ * Fetch a single record by ID (UUID) or Entropy Hash.
+ * Supports partial matches (prefixes) for convenience.
+ */
+async function getRecordByAny(identifier) {
+  if (!identifier) return null;
+  const cleanId = identifier.trim().toLowerCase();
+  
+  // 1. Try exact UUID match
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cleanId);
+  if (isUuid) {
+    const res = await pool.query('SELECT * FROM entropy_records WHERE id = $1', [cleanId]);
+    if (res.rows[0]) return res.rows[0];
+  }
+
+  // 2. Try exact Hash match
+  const resHash = await pool.query('SELECT * FROM entropy_records WHERE entropy_hash = $1', [cleanId]);
+  if (resHash.rows[0]) return resHash.rows[0];
+
+  // 3. Try prefix match (first 8+ chars)
+  if (cleanId.length >= 8) {
+    const resPrefix = await pool.query(`
+      SELECT * FROM entropy_records 
+      WHERE id::text LIKE $1 || '%' 
+         OR entropy_hash LIKE $1 || '%'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `, [cleanId]);
+    return resPrefix.rows[0] || null;
+  }
+
+  return null;
+}
+
+module.exports = { processEntropy, getLatest, getHistory, setIO, getDeviceStatuses, forceDeviceStatus, getTRNGStatus, getRecordById, getRecordByAny };
+
+

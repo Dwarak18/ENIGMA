@@ -35,7 +35,7 @@ services:
     networks:
       - enigma_net
 
-  # ── Backend (FastAPI + Python + OpenCV) ────────────────────────────────
+  # ── Backend (Node.js Express + WebSocket) ──────────────────────────────
   backend:
     build:
       context: ./backend
@@ -45,16 +45,14 @@ services:
     environment:
       # Database connection
       DATABASE_URL: postgresql://enigma:changeme@postgres:5432/enigma_db
-      # Server seed for key derivation
-      SERVER_RANDOM_SEED: ${SERVER_RANDOM_SEED:-default-server-seed-change-me}
-      DEBUG: "False"
+      PORT: 3000
     expose:
-      - "8000"
+      - "3000"
     depends_on:
       postgres:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5
@@ -71,8 +69,8 @@ services:
     ports:
       - "80:80"
     environment:
-      # Tell Nginx to reverse-proxy API requests to FastAPI backend
-      VITE_API_URL: http://backend:8000
+      # Tell Nginx to reverse-proxy API requests to Node backend
+      VITE_API_URL: http://backend:3000
     depends_on:
       backend:
         condition: service_healthy
@@ -100,7 +98,7 @@ services:
       - /dev:/dev             # expose host USB/serial device nodes
       - /run/udev:/run/udev:ro  # udev event socket (Linux; skipped on Windows)
     environment:
-      BACKEND_URL:           http://backend:8000
+      BACKEND_URL:           http://backend:3000
       DEVICE_ID:             esp32-001
       BAUD_RATE:             "115200"
       SETTLE_S:              "1.5"
@@ -118,7 +116,7 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     environment:
-      BACKEND_URL:          http://backend:8000
+      BACKEND_URL:          http://backend:3000
       DEVICE_ID:            esp32-001-sim
       ENTROPY_INTERVAL_MS:  "10000"
       HTTP_TIMEOUT_S:       "10"

@@ -53,16 +53,24 @@ export default function EntropyPage({ entropyScore, latestRecord, currentFrame }
           </div>
           <div className="aspect-video relative" style={{ background: '#09090b', border: '1px solid #27272a', borderRadius: '2px', overflow: 'hidden' }}>
             <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div
-                className="lava-lamp"
-                style={{
-                  width: '256px', height: '256px', borderRadius: '50%',
-                  background: 'radial-gradient(circle at 30% 40%, #ff6b6b, #ee5a6f 30%, #c44569 60%, #8b3a62 90%)',
-                }}
-              />
+              {latestRecord?.image_preview ? (
+                <img
+                  src={latestRecord.image_preview}
+                  alt="Live Capture"
+                  style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                />
+              ) : (
+                <div
+                  className="lava-lamp"
+                  style={{
+                    width: '256px', height: '256px', borderRadius: '50%',
+                    background: 'radial-gradient(circle at 30% 40%, #ff6b6b, #ee5a6f 30%, #c44569 60%, #8b3a62 90%)',
+                  }}
+                />
+              )}
             </div>
             <div style={{ position: 'absolute', top: '16px', left: '16px', background: 'rgba(0,0,0,0.7)', padding: '4px 12px', fontSize: '10px', color: '#d4d4d8' }}>
-              Frame #{currentFrame} • ORIGINAL
+              {latestRecord ? `Frame #${latestRecord.id?.slice(0, 8)} • ORIGINAL` : `Frame #${currentFrame} • WAITING...`}
             </div>
           </div>
         </div>

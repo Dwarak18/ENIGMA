@@ -54,7 +54,7 @@ log = logging.getLogger(__name__)
 
 # ── Configuration ──────────────────────────────────────────────────────────
 BACKEND_URL       = os.environ.get('BACKEND_URL',              'http://backend:3000')
-DEVICE_ID         = os.environ.get('DEVICE_ID',                'esp32-001-sim')
+DEVICE_ID         = os.environ.get('DEVICE_ID',                'ENIGMA')
 INTERVAL_MS       = int(os.environ.get('ENTROPY_INTERVAL_MS',  '10000'))
 HTTP_TIMEOUT_S    = int(os.environ.get('HTTP_TIMEOUT_S',        '10'))
 IMAGE_BITSTREAM_BITS = int(os.environ.get('IMAGE_BITSTREAM_BITS', '128'))

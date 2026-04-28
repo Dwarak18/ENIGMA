@@ -6,6 +6,7 @@
  * only the props they need.
  */
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { io } from 'socket.io-client';
 
 import LiveClock          from './components/LiveClock.jsx';
 import DevicePairingBadge from './components/DevicePairingBadge.jsx';
@@ -73,27 +74,32 @@ export default function App() {
   const pipeline      = useMemo(() => buildPipeline(records, wsStatus === 'connected'), [records, wsStatus]);
 
   const hardware = useMemo(() => {
-    const devs = systemStatus?.devices;
-    if (!devs?.length) {
-      return {
-        camera:    { connected: false, resolution: '1920x1080', fps: 30, lastCapture: null },
-        esp32:     { online: false, lastHeartbeat: null, latency: 0 },
-        ds3231:    { synced: false, drift: 0, lastSync: null, rtc_time: null },
-        atecc608a: { present: false, lastSigning: null, firmwareVersion: 'v2.1.3' },
-      };
-    }
-    const d  = devs[0];
+    const devs = systemStatus?.devices || [];
+    
+    const baseHw = {
+      camera:    { connected: false, resolution: '1280x720', fps: 30, lastCapture: null },
+      esp32:     { online: false, lastHeartbeat: null, latency: 0 },
+      ds3231:    { synced: false, drift: 0, lastSync: null, rtc_time: null },
+      atecc608a: { present: false, lastSigning: null, firmwareVersion: 'v2.1.3' },
+    };
+
+    // Find our primary device ENIGMA
+    const d = devs.find(dev => dev.device_id === 'ENIGMA') || devs[0];
+    if (!d) return baseHw;
+
     const rt = deviceStates[d.device_id];  // realtime override
     const on = rt ? rt.online : d.online;
-    const paired   = d.has_key || false;
-    const rtcTime  = rt?.rtc_time || null;
+    // firmwareRtcTime is the time reported by the ESP32 (SNTP/NTP time)
+    const rtcTime  = rt?.rtc_time || d.rtc_time || firmwareRtcTime || null;
+
     return {
-      camera:    { connected: on, resolution: '1920x1080', fps: 30, lastCapture: on ? d.last_seen : null },
-      esp32:     { online: on, paired, lastHeartbeat: d.last_seen, latency: 12, deviceId: d.device_id, records: d.record_count, rtc_time: rtcTime },
-      ds3231:    { synced: on, drift: on ? 0.3 : 0, lastSync: d.last_seen, rtc_time: rtcTime },
-      atecc608a: { present: paired, lastSigning: latestRecord?.created_at, firmwareVersion: 'v2.1.3' },
+      camera:    { connected: true, resolution: '1280x720', fps: 30, lastCapture: on ? d.last_seen : null },
+      esp32:     { online: on, paired: d.has_key || on, lastHeartbeat: d.last_seen, latency: 12, deviceId: d.device_id, records: d.record_count, rtc_time: rtcTime },
+      // DS3231 and ATECC608A are active only if the ESP32 is online and transmitting
+      ds3231:    { synced: on && !!rtcTime, drift: on ? 0.2 : 0, lastSync: d.last_seen, rtc_time: rtcTime },
+      atecc608a: { present: on, lastSigning: latestRecord?.created_at, firmwareVersion: 'v2.1.3' },
     };
-  }, [systemStatus, latestRecord, deviceStates]);
+  }, [systemStatus, latestRecord, deviceStates, firmwareRtcTime]);
 
   // ── REST loaders ──────────────────────────────────────────────────
   const loadHistory = useCallback(async () => {
@@ -116,26 +122,71 @@ export default function App() {
 
   // ── Socket.IO ─────────────────────────────────────────────────────
   useEffect(() => {
-    setWsStatus('connecting');
-    setRecords([]);
-    setSystemStatus(null);
-    setLatestRecord(null);
-    loadHistory();
-    loadSystemStatus();
-    return () => {};
-  }, [backendUrl, loadHistory, loadSystemStatus]);
+    const socket = io(backendUrl, {
+      transports: ['websocket', 'polling'],
+      reconnectionAttempts: 5,
+    });
 
-  useEffect(() => {
-    const refresh = () => {
-      Promise.all([loadHistory(), loadSystemStatus()])
-        .then(() => setWsStatus('connected'))
-        .catch(() => setWsStatus('error'));
+    socket.on('connect', () => {
+      setWsStatus('connected');
+      loadHistory();
+      loadSystemStatus();
+    });
+
+    socket.on('disconnect', () => {
+      setWsStatus('disconnected');
+    });
+
+    socket.on('connect_error', () => {
+      setWsStatus('error');
+    });
+
+    socket.on('system:stats', (stats) => {
+      setSystemStatus(stats);
+      if (stats.trng) setTrngStatus(stats.trng);
+    });
+
+    socket.on('trng:state', (status) => {
+      setTrngStatus(status);
+    });
+
+    socket.on('device:status', (status) => {
+      setDeviceStates(prev => ({
+        ...prev,
+        [status.device_id]: {
+          online: status.online,
+          last_seen: status.last_seen || Date.now(),
+          rtc_time: status.rtc_time || (prev[status.device_id]?.rtc_time),
+        }
+      }));
+
+      // Force TRNG Active if we have a live device
+      if (status.online) {
+        setTrngStatus(prev => ({ ...prev, state: 'active' }));
+      }
+
+      // Add toast
+      const id = Math.random().toString(36).slice(2, 9);
+      setToasts(prev => [{ ...status, id }, ...prev].slice(0, 5));
+      setTimeout(() => {
+        setToasts(prev => prev.filter(t => t.id !== id));
+      }, 5000);
+    });
+
+    socket.on('entropy:new', (record) => {
+      setRecords(prev => {
+        // Avoid duplicates
+        if (prev.find(r => r.id === record.id)) return prev;
+        return [record, ...prev].slice(0, 100);
+      });
+      setLatestRecord(record);
+      setCurrentFrame(prev => prev + 1);
+    });
+
+    return () => {
+      socket.disconnect();
     };
-
-    refresh();
-    const interval = setInterval(refresh, 5000);
-    return () => clearInterval(interval);
-  }, [loadHistory, loadSystemStatus]);
+  }, [backendUrl, loadHistory, loadSystemStatus]);
 
   // ── Countdown timer ───────────────────────────────────────────────
   useEffect(() => {
@@ -167,7 +218,7 @@ export default function App() {
           <div className="flex items-center gap-6">
             <h1 className="text-xl font-bold uppercase tracking-wider flex items-center gap-3">
               <span style={{ color: '#10b981' }}>⬢</span>
-              TRNG Control System
+              ARGUS Control System
             </h1>
             <div className="flex items-center gap-2" style={{ fontSize: '10px', color: '#71717a' }}>
               <span>v2.1.0</span>

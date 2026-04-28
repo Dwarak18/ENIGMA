@@ -227,7 +227,7 @@ export default function TimeHardwarePage({ hardware, systemStatus, latestRecord,
             {latestRecord?.timestamp && (
               <div style={{ fontSize: '12px', color: '#71717a', marginTop: '6px' }}>
                 Full IST: {(() => {
-                  const ist = new Date((latestRecord.timestamp + 19800) * 1000);
+                  const ist = new Date((Number(latestRecord.timestamp) + 19800) * 1000);
                   return ist.toISOString().replace('T', ' ').slice(0, 19) + ' IST';
                 })()}
               </div>

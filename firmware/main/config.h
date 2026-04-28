@@ -12,16 +12,19 @@
 #define DEVICE_ID              "esp32-001"
 
 /* ── Wi-Fi Credentials ───────────────────────────────── */
-#define WIFI_SSID              "Bala"       /* ← fill in your WiFi name */
-#define WIFI_PASSWORD          "v2i4d0h3u"   /* ← fill in your WiFi password */
+#define WIFI_SSID              "Nothing Phone (4a)"       /* ← fill in your WiFi name */
+#define WIFI_PASSWORD          "31053105"   /* ← fill in your WiFi password */
 #define WIFI_MAX_RETRY         10
 
 /* ── Backend Endpoint ────────────────────────────────── */
 /* Laptop Wi-Fi IP; ESP32 posts directly to the Node backend on port 3000. */
-#define BACKEND_HOST           "http://192.168.10.8:3000"
+#define BACKEND_HOST           "http://10.83.47.80:3000"
 #define BACKEND_ENTROPY_PATH   "/api/v1/entropy"
-#define BACKEND_WEBSOCKET_URI  "ws://192.168.10.8:3000"
+#define BACKEND_WEBSOCKET_URI  "ws://10.83.47.80:3000"
 #define HTTP_TIMEOUT_MS        10000
+
+/* ── Crypto Secrets ─────────────────────────────────── */
+#define SERVER_SEED            "enigma_secret_seed_2024"  /* Must match backend */
 
 /* ── Timing ──────────────────────────────────────────── */
 #define ENTROPY_INTERVAL_MS    10000   /* 10 seconds */

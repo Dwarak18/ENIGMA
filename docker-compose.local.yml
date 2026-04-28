@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       enigma_db
+      POSTGRES_USER:     enigma
+      POSTGRES_PASSWORD: changeme
+    volumes:
+      - postgres_data_local:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U enigma -d enigma_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks:
+      - enigma_net_local
+
+  firmware:
+    build:
+      context: ./firmware
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BACKEND_URL:          http://host.docker.internal:3000
+      DEVICE_ID:            ENIGMA
+      ENTROPY_INTERVAL_MS:  "10000"
+      HTTP_TIMEOUT_S:       "10"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - enigma_net_local
+
+volumes:
+  postgres_data_local:
+
+networks:
+  enigma_net_local:
+    driver: bridge

@@ -238,16 +238,30 @@ function normalizeBase64Image(imageBase64) {
   };
 }
 
+const fs           = require('fs');
+const path         = require('path');
+
+const STORAGE_PATH = path.join(__dirname, '../../capture');
+if (!fs.existsSync(STORAGE_PATH)) {
+  fs.mkdirSync(STORAGE_PATH, { recursive: true });
+}
+
 function encryptImageBytes(buffer, deviceId, timestamp, espTime) {
+  // Use deviceId, timestamp, and espTime for entropy in key material
   const keyMaterial = `${deviceId}|${timestamp}|${espTime}|${SERVER_IMAGE_SECRET}`;
-  const key = crypto.createHash('sha256').update(keyMaterial).digest();
+  
+  // We want AES-128, so we take the first 16 bytes of the SHA-256 hash
+  const fullHash = crypto.createHash('sha256').update(keyMaterial).digest();
+  const key = fullHash.slice(0, 16); // 128 bits
   const iv = crypto.randomBytes(16);
 
-  const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+  const cipher = crypto.createCipheriv('aes-128-cbc', key, iv);
   const encrypted = Buffer.concat([cipher.update(buffer), cipher.final()]);
 
   const imageHash = crypto.createHash('sha256').update(buffer).digest('hex');
   const encryptedHash = crypto.createHash('sha256').update(encrypted).digest('hex');
+  
+  // Hash the encryption key with ESP time as requested
   const keyTimeHash = crypto.createHash('sha256')
     .update(key)
     .update(String(espTime))
@@ -264,7 +278,7 @@ function encryptImageBytes(buffer, deviceId, timestamp, espTime) {
 }
 
 async function captureLaptopImage({ deviceId, imageBase64, espTime }) {
-  const device_id = deviceId || 'webcam-local-001';
+  const device_id = deviceId || 'esp32-001';
   const timestamp = Math.floor(Date.now() / 1000);
   const resolvedEspTime = espTime || new Date(timestamp * 1000).toISOString();
   const image = normalizeBase64Image(imageBase64);
@@ -275,6 +289,12 @@ async function captureLaptopImage({ deviceId, imageBase64, espTime }) {
     err.statusCode = 400;
     throw err;
   }
+
+  // Save to local folder as requested
+  const filename = `${device_id}_${timestamp}.jpg`;
+  const filePath = path.join(STORAGE_PATH, filename);
+  fs.writeFileSync(filePath, imageBuffer);
+  logger.info('Image saved to local storage', { path: filePath });
 
   await ensureDevice(device_id);
 
@@ -321,7 +341,7 @@ async function captureLaptopImage({ deviceId, imageBase64, espTime }) {
     imageBuffer.length,
   ]);
 
-  logger.info('Laptop camera image captured and encrypted', {
+  logger.info('Laptop camera image captured and encrypted (AES-128)', {
     device_id,
     timestamp,
     byte_size: imageBuffer.length,

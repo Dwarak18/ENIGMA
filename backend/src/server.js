@@ -17,6 +17,8 @@ const systemRoutes = require('./routes/system');
 const agentRoutes = require('./routes/agentRoutes');
 const { startRetryWorker } = require('./services/blockchain');
 const { startBlockchainAgent } = require('./services/blockchainAgent');
+const { createWebSocketServer } = require('./websocket');
+const entropyService = require('./services/entropyService');
 
 const app = express();
 
@@ -40,6 +42,11 @@ app.use((err, _req, res, _next) => {
 const PORT = config.port || 3000;
 const server = app.listen(PORT, () => {
   logger.info(`Server listening on port ${PORT}`);
+  
+  // Attach Socket.IO
+  const io = createWebSocketServer(server);
+  entropyService.setIO(io);
+  
   startRetryWorker();
   startBlockchainAgent().catch((err) => {
     logger.error('[AGENT] Failed to start blockchain agent', {

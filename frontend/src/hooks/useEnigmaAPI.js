@@ -131,7 +131,7 @@ export const useEnigmaAPI = () => {
   // Verification
   const verifyRecord = useCallback(
     (recordId) =>
-      request(`/verify/${recordId}`, {
+      request(`/api/v1/entropy/verify/${encodeURIComponent(recordId)}`, {
         method: 'POST',
       }),
     [request]
