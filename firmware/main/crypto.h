@@ -1,76 +1,57 @@
 /**
  * @file crypto.h
- * @brief Cryptographic abstraction layer for ENIGMA (ESP32-S3 MbedTLS)
- *
- * This module handles ECDSA signing, SHA-256 hashing, and AES-128-CTR encryption.
- * It is optimized for the ESP32-S3 using hardware-accelerated MbedTLS.
+ * @brief AES-128 + SHA-256 + hex utility API using ESP-IDF mbedTLS.
  */
 
 #pragma once
+
+#include "esp_err.h"
 #include <stdint.h>
 #include <stddef.h>
-#include "esp_err.h"
 
-/** Raw secp256r1 public key: 0x04 || X(32) || Y(32) = 65 bytes */
-#define CRYPTO_PUBKEY_LEN   65
-/** Raw ECDSA signature: r(32) || s(32) = 64 bytes */
-#define CRYPTO_SIG_LEN      64
-/** SHA-256 digest = 32 bytes */
-#define CRYPTO_HASH_LEN     32
-/** AES-128 key = 16 bytes */
-#define CRYPTO_AES_KEY_LEN  16
-/** AES IV / Nonce = 16 bytes */
-#define CRYPTO_IV_LEN       16
+#define CRYPTO_SHA256_LEN 32
+#define CRYPTO_AES_BLOCK_LEN 16
+#define CRYPTO_AES_KEY_LEN 16
+#define CRYPTO_ENCRYPTED_MAX_LEN(input_len) ((((input_len) / CRYPTO_AES_BLOCK_LEN) + 1) * CRYPTO_AES_BLOCK_LEN)
 
 /**
- * @brief Initialise crypto subsystem (ECDSA, RNG).
- * @return ESP_OK on success.
+ * @brief AES-128 encryption (ECB + PKCS#7 padding) using fixed 16-byte key.
  */
-esp_err_t crypto_init(void);
+esp_err_t aes_encrypt(const uint8_t *input,
+                      size_t len,
+                      uint8_t *output,
+                      size_t output_capacity,
+                      size_t *output_len);
 
 /**
- * @brief Derive a 128-bit AES key from device identity and timestamp.
- * 
- * Logic: SHA256(device_id + timestamp + server_seed) -> first 16 bytes.
+ * @brief Compute SHA-256 for arbitrary input.
  */
-esp_err_t crypto_derive_aes_key(const char *device_id, 
-                                uint64_t    timestamp, 
-                                const char *server_seed,
-                                uint8_t     key_out[CRYPTO_AES_KEY_LEN]);
+esp_err_t compute_sha256(const uint8_t *input, size_t len, uint8_t output[CRYPTO_SHA256_LEN]);
 
 /**
- * @brief Compute SHA-256 over entropy buffer + timestamp + device_id.
+ * @brief Compute SHA256(encrypted_data || timestamp_string).
  */
-esp_err_t crypto_hash(const uint8_t *entropy, size_t elen,
-                      uint64_t timestamp, const char *device_id,
-                      uint8_t hash_out[CRYPTO_HASH_LEN]);
+esp_err_t compute_integrity_hash(const uint8_t *encrypted_data,
+                                 size_t encrypted_len,
+                                 const char *timestamp,
+                                 uint8_t output[CRYPTO_SHA256_LEN]);
 
 /**
- * @brief Sign a 32-byte hash using the device private key (secp256r1).
+ * @brief Convert bytes to lowercase hex string.
+ *
+ * @param bytes Input bytes
+ * @param len Input byte length
+ * @param hex_out Output string
+ * @param hex_out_len Output buffer length (must be at least len*2 + 1)
  */
-esp_err_t sign_hash(const uint8_t hash[CRYPTO_HASH_LEN],
-                    uint8_t sig_out[CRYPTO_SIG_LEN]);
+esp_err_t bytes_to_hex(const uint8_t *bytes, size_t len, char *hex_out, size_t hex_out_len);
 
 /**
- * @brief Encrypt data using AES-128-CTR.
- * 
- * @param data      Input plaintext
- * @param dlen      Length of input
- * @param key       16-byte AES key
- * @param iv_inout  16-byte IV (modified by function)
- * @param out       Output ciphertext (same length as input)
+ * @brief Convert lowercase/uppercase hex string to bytes.
+ *
+ * @param hex Input hex string (without 0x prefix)
+ * @param out Output bytes
+ * @param out_capacity Output capacity
+ * @param out_len Decoded byte count
  */
-esp_err_t crypto_aes_encrypt_ctr(const uint8_t *data, size_t dlen,
-                                 const uint8_t  key[CRYPTO_AES_KEY_LEN],
-                                 uint8_t        iv_inout[CRYPTO_IV_LEN],
-                                 uint8_t       *out);
-
-/**
- * @brief Copy the uncompressed public key into @p pub_out.
- */
-esp_err_t crypto_get_pubkey(uint8_t pub_out[CRYPTO_PUBKEY_LEN]);
-
-/**
- * @brief Convert binary buffer to a lowercase hex string.
- */
-void crypto_bytes_to_hex(const uint8_t *src, size_t slen, char *dst);
+esp_err_t hex_to_bytes(const char *hex, uint8_t *out, size_t out_capacity, size_t *out_len);

@@ -1,21 +1,18 @@
 # ══════════════════════════════════════════════════════════════════════════
-# ENIGMA – Docker Compose stack
+# ENIGMA – Unified Docker Compose Stack
 #
 # Services:
-#   postgres   PostgreSQL 15 (persistent volume)
-#   backend    FastAPI + Python (image processing, crypto, entropy)
-#   frontend   React/Vite built → served by Nginx (also reverse-proxies API)
-#
-# Usage:
-#   docker compose up -d --build               # first run (builds images)
-#   docker compose up -d                       # subsequent starts
-#   docker compose down                        # stop & remove containers
-#   docker compose down -v                     # + remove DB volume
+#   postgres      PostgreSQL 15 (persistent storage)
+#   blockchain    Hardhat local node (EVM compatibility)
+#   backend       Node.js Express + WebSocket (logic & crypto)
+#   frontend      React/Vite served by Nginx (UI)
+#   firmware      ESP32-S3 Simulator (logic testing)
+#   device-listener Hardware bridge (serial to API)
 # ══════════════════════════════════════════════════════════════════════════
 
 services:
 
-  # ── PostgreSQL 15 ─────────────────────────────────────────────────────
+  # ── PostgreSQL 15 (Database) ──────────────────────────────────────────
   postgres:
     image: postgres:15-alpine
     restart: unless-stopped
@@ -23,6 +20,8 @@ services:
       POSTGRES_DB:       enigma_db
       POSTGRES_USER:     enigma
       POSTGRES_PASSWORD: changeme
+    ports:
+      - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
@@ -35,7 +34,18 @@ services:
     networks:
       - enigma_net
 
-  # ── Backend (Node.js Express + WebSocket) ──────────────────────────────
+  # ── Blockchain (Hardhat Node) ─────────────────────────────────────────
+  blockchain:
+    build:
+      context: .
+      dockerfile: Dockerfile.blockchain
+    restart: unless-stopped
+    ports:
+      - "8545:8545"
+    networks:
+      - enigma_net
+
+  # ── Backend (Node.js Express) ─────────────────────────────────────────
   backend:
     build:
       context: ./backend
@@ -43,14 +53,19 @@ services:
     restart: unless-stopped
     env_file: ./backend/.env
     environment:
-      # Database connection
-      DATABASE_URL: postgresql://enigma:changeme@postgres:5432/enigma_db
+      DATABASE_URL:      postgresql://enigma:changeme@postgres:5432/enigma_db
+      RPC_URL:           http://blockchain:8545
+      PRIVATE_KEY:       0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80
+      CONTRACT_ADDRESS:  0x5FbDB2315678afecb367f032d93F642f64180aa3
+      BLOCKCHAIN_ENABLED: "true"
       PORT: 3000
     expose:
       - "3000"
     depends_on:
       postgres:
         condition: service_healthy
+      blockchain:
+        condition: service_started
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
       interval: 15s
@@ -60,7 +75,7 @@ services:
     networks:
       - enigma_net
 
-  # ── Frontend (React → Nginx reverse proxy) ────────────────────────────
+  # ── Frontend (React + Nginx) ──────────────────────────────────────────
   frontend:
     build:
       context: ./frontend
@@ -69,7 +84,6 @@ services:
     ports:
       - "80:80"
     environment:
-      # Tell Nginx to reverse-proxy API requests to Node backend
       VITE_API_URL: http://backend:3000
     depends_on:
       backend:
@@ -77,26 +91,33 @@ services:
     networks:
       - enigma_net
 
-  # ── Device Listener (USB/serial ESP32-S3 + ATECC608A detector) ───────────
-  # Watches the host /dev tree via udev for ESP32 USB-serial devices.
-  # On detection it performs a serial handshake + ATECC608A challenge-response
-  # to verify the device, then POSTs device-status to the backend.
-  #
-  # Windows / Docker Desktop: bind the ESP32 USB device to WSL2 first:
-  #   usbipd list
-  #   usbipd bind   --busid <id>
-  #   usbipd attach --wsl --busid <id>
-  #
-  # Set SKIP_HANDSHAKE=true for development without real hardware.
+  # ── Firmware (ESP32-S3 Simulator) ────────────────────────────────────
+  firmware:
+    build:
+      context: ./firmware
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      BACKEND_URL:          http://backend:3000
+      DEVICE_ID:            ENIGMA
+      ENTROPY_INTERVAL_MS:  "10000"
+      HTTP_TIMEOUT_S:       "10"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - enigma_net
+
+  # ── Device Listener (USB/Serial Bridge) ───────────────────────────────
   device-listener:
     build:
       context: ./tools/device_listener
       dockerfile: Dockerfile
     restart: unless-stopped
-    privileged: true          # required for udev netlink socket on Linux
+    privileged: true
     volumes:
-      - /dev:/dev             # expose host USB/serial device nodes
-      - /run/udev:/run/udev:ro  # udev event socket (Linux; skipped on Windows)
+      - /dev:/dev
+      - /run/udev:/run/udev:ro
     environment:
       BACKEND_URL:           http://backend:3000
       DEVICE_ID:             esp32-001
@@ -110,27 +131,10 @@ services:
         condition: service_healthy
     networks:
       - enigma_net
-  firmware:
-    build:
-      context: ./firmware
-      dockerfile: Dockerfile
-    restart: unless-stopped
-    environment:
-      BACKEND_URL:          http://backend:3000
-      DEVICE_ID:            esp32-001-sim
-      ENTROPY_INTERVAL_MS:  "10000"
-      HTTP_TIMEOUT_S:       "10"
-    depends_on:
-      backend:
-        condition: service_healthy
-    networks:
-      - enigma_net
 
-# ── Volumes ───────────────────────────────────────────────────────────────
 volumes:
   postgres_data:
 
-# ── Networks ──────────────────────────────────────────────────────────────
 networks:
   enigma_net:
     driver: bridge

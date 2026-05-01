@@ -1,6 +1,6 @@
 /**
  * src/pages/BlockchainPage.jsx
- * Real-time Sepolia Blockchain Anchoring dashboard with Metamask integration.
+ * Real-time Local Blockchain Anchoring dashboard.
  */
 import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
@@ -85,7 +85,7 @@ export default function BlockchainPage({ records, latestRecord, firmwareRtcTime 
               BLOCKCHAIN WALLET (METAMASK)
             </h2>
             <p style={{ fontSize: '11px', color: '#71717a' }}>
-              Connect to Sepolia Testnet to verify anchors directly on-chain.
+              Connect to Local Hardhat Node to verify anchors directly on-chain.
             </p>
           </div>
           {!account ? (
@@ -124,7 +124,7 @@ export default function BlockchainPage({ records, latestRecord, firmwareRtcTime 
 
         {/* Contract Info */}
         <div className="card col-span-2">
-          <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '12px', textTransform: 'uppercase' }}>Anchor Contract (Sepolia)</div>
+          <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '12px', textTransform: 'uppercase' }}>Anchor Contract (Local)</div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: '13px', fontWeight: 'bold', color: '#3b82f6', fontFamily: 'monospace', wordBreak: 'break-all' }}>
@@ -151,7 +151,7 @@ export default function BlockchainPage({ records, latestRecord, firmwareRtcTime 
         {anchoredRecords.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '60px', color: '#52525b' }}>
             <div style={{ fontSize: '24px', marginBottom: '12px' }}>⬡</div>
-            <div style={{ fontSize: '13px' }}>No records confirmed on Sepolia yet.</div>
+            <div style={{ fontSize: '13px' }}>No records confirmed on Local Chain yet.</div>
             <div style={{ fontSize: '11px', marginTop: '8px' }}>Ensure your backend has a PRIVATE_KEY and RPC_URL configured.</div>
           </div>
         ) : (
@@ -170,7 +170,7 @@ export default function BlockchainPage({ records, latestRecord, firmwareRtcTime 
                   <tr key={idx} style={{ borderTop: '1px solid #27272a', fontSize: '12px' }}>
                     <td style={{ padding: '12px 16px' }}>
                       <a 
-                        href={`https://sepolia.etherscan.io/tx/${r.tx_hash}`} 
+                        href={`#`} 
                         target="_blank" 
                         rel="noreferrer"
                         style={{ color: '#3b82f6', fontFamily: 'monospace', textDecoration: 'none' }}
@@ -197,8 +197,8 @@ export default function BlockchainPage({ records, latestRecord, firmwareRtcTime 
 
       {/* Info banner */}
       <div style={{ padding: '14px 18px', borderRadius: '2px', background: 'rgba(16,185,129,.05)', border: '1px solid rgba(16,185,129,.2)', fontSize: '12px', color: '#a7f3d0' }}>
-        <strong>⬡ Immutable Anchoring Active</strong> — This system automatically anchors every hardware record to the Ethereum Sepolia Testnet. 
-        Confirmation happens once the transaction is included in a block. You can click any transaction ID to verify the proof on Etherscan.
+        <strong>⬡ Immutable Anchoring Active</strong> — This system automatically anchors every hardware record to the Local Blockchain. 
+        Confirmation happens once the transaction is included in a block.
       </div>
     </div>
   );

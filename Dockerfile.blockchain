@@ -1,0 +1,19 @@
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install system dependencies for build-essential if needed, 
+# but hardhat usually doesn't need much in alpine for node 20.
+RUN apk add --no-cache python3 make g++
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+
+# Compile contracts
+# RUN npx hardhat compile
+
+EXPOSE 8545
+
+CMD ["npx", "hardhat", "node", "--hostname", "0.0.0.0"]

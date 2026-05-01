@@ -35,6 +35,7 @@ router.get('/status', async (_req, res) => {
           d.last_seen,
           d.first_seen,
           d.public_key,
+          (SELECT rtc_time FROM entropy_records WHERE device_id = d.device_id ORDER BY created_at DESC LIMIT 1) as rtc_time,
           COUNT(e.id)::int AS record_count
         FROM devices d
         LEFT JOIN entropy_records e ON e.device_id = d.device_id
@@ -74,6 +75,7 @@ router.get('/status', async (_req, res) => {
         last_seen:    d.last_seen,
         first_seen:   d.first_seen,
         record_count: d.record_count,
+        rtc_time:     d.rtc_time,
         online,
         has_key: Boolean(d.public_key),
       };

@@ -207,7 +207,17 @@ export default function App() {
 
   // ── Render ────────────────────────────────────────────────────────
   return (
-    <div className="min-h-screen" style={{ background: '#0a0a0a', color: '#fafafa' }}>
+    <div
+      className="min-h-screen"
+      style={{
+        background: '#0a0a0a',
+        color: '#fafafa',
+        height: '100vh',
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
 
       {/* ── Top Bar ──────────────────────────────────────────────── */}
       <div
@@ -251,11 +261,15 @@ export default function App() {
         </div>
       </div>
 
-      <div className="flex">
+      <div className="flex" style={{ flex: 1, minHeight: 0 }}>
         {/* ── Sidebar ────────────────────────────────────────────── */}
         <div style={{
-          width: '256px', borderRight: '1px solid #27272a',
-          background: 'rgba(24,24,27,0.5)', minHeight: 'calc(100vh - 73px)', padding: '16px',
+          width: '256px',
+          flexShrink: 0,
+          borderRight: '1px solid #27272a',
+          background: 'rgba(24,24,27,0.5)',
+          padding: '16px',
+          overflowY: 'auto',
         }}>
           <nav className="space-y-1">
             {NAVIGATION.map((item) => (
@@ -283,7 +297,7 @@ export default function App() {
         </div>
 
         {/* ── Main Content ───────────────────────────────────────── */}
-        <div style={{ flex: 1, padding: '32px', paddingBottom: '80px' }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '32px', paddingBottom: '80px' }}>
 
           {activePage === 'overview' && (
             <OverviewPage

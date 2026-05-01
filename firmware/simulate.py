@@ -59,8 +59,8 @@ INTERVAL_MS       = int(os.environ.get('ENTROPY_INTERVAL_MS',  '10000'))
 HTTP_TIMEOUT_S    = int(os.environ.get('HTTP_TIMEOUT_S',        '10'))
 IMAGE_BITSTREAM_BITS = int(os.environ.get('IMAGE_BITSTREAM_BITS', '128'))
 
-ECDSA_KEY_FILE    = '/tmp/enigma_sim_key.pem'
-AES_KEY_FILE      = '/tmp/enigma_sim_aes_key.bin'
+ECDSA_KEY_FILE    = 'enigma_sim_key.pem'
+AES_KEY_FILE      = 'enigma_sim_aes_key.bin'
 
 # IST = UTC + 5 h 30 min
 IST_OFFSET_SECS   = 5 * 3600 + 30 * 60

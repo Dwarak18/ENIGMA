@@ -9,7 +9,7 @@ let provider = null;
 let wallet = null;
 
 /**
- * Initialize the Ethereum client using Sepolia provider and the backend's private key.
+ * Initialize the Ethereum client using local provider and the backend's private key.
  */
 function initClient() {
   if (wallet) return wallet;
@@ -26,9 +26,9 @@ function initClient() {
     provider = new ethers.JsonRpcProvider(rpcUrl);
     wallet = new ethers.Wallet(privateKey, provider);
     
-    logger.info('Blockchain client initialized (Minimal Method)', { 
+    logger.info('Blockchain client initialized (Local Hardhat)', { 
       walletAddress: wallet.address,
-      network: 'Sepolia'
+      network: 'Local'
     });
     return wallet;
   } catch (err) {
@@ -54,7 +54,7 @@ async function storeHashOnChain(deviceId, timestamp, hash) {
     const dataString = `ARGUS|${deviceId}|${hash}`;
     const hexData = ethers.hexlify(ethers.toUtf8Bytes(dataString));
 
-    logger.info('Sending minimal anchor transaction to Sepolia...', { deviceId });
+    logger.info('Sending minimal anchor transaction to local node...', { deviceId });
 
     // 2. Send transaction to self
     const tx = await signer.sendTransaction({

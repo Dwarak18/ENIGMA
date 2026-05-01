@@ -14,6 +14,7 @@ const service  = require('../services/entropyService');
 const dataController = require('../controllers/data');
 const metrics  = require('../metrics');
 const logger   = require('../logger');
+const pool     = require('../db/pool');
 const {
   entropySubmitRules,
   historyQueryRules,
