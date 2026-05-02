@@ -3,11 +3,16 @@ idf_component_register(
         "main.c"
         "uart.c"
         "crypto.c"
-        "rtc.c"
+        "wifi.c"
+        "ntp.c"
         "utils.c"
     INCLUDE_DIRS "."
     REQUIRES
         mbedtls
         driver
         json
+        esp_wifi
+        nvs_flash
+        esp_netif
+        lwip
 )

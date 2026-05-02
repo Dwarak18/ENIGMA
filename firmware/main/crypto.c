@@ -37,9 +37,9 @@ esp_err_t compute_sha256(const uint8_t *input, size_t len, uint8_t output[CRYPTO
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
 
-    int ret = mbedtls_sha256_starts_ret(&ctx, 0);
-    if (ret == 0) ret = mbedtls_sha256_update_ret(&ctx, input, len);
-    if (ret == 0) ret = mbedtls_sha256_finish_ret(&ctx, output);
+    int ret = mbedtls_sha256_starts(&ctx, 0);
+    if (ret == 0) ret = mbedtls_sha256_update(&ctx, input, len);
+    if (ret == 0) ret = mbedtls_sha256_finish(&ctx, output);
 
     mbedtls_sha256_free(&ctx);
 
@@ -50,11 +50,11 @@ esp_err_t compute_sha256(const uint8_t *input, size_t len, uint8_t output[CRYPTO
     return ESP_OK;
 }
 
-esp_err_t aes_encrypt(const uint8_t *input,
-                      size_t len,
-                      uint8_t *output,
-                      size_t output_capacity,
-                      size_t *output_len)
+esp_err_t enigma_aes_encrypt(const uint8_t *input,
+                             size_t len,
+                             uint8_t *output,
+                             size_t output_capacity,
+                             size_t *output_len)
 {
     if (!output || !output_len || (!input && len > 0)) {
         return ESP_ERR_INVALID_ARG;
@@ -113,10 +113,10 @@ esp_err_t compute_integrity_hash(const uint8_t *encrypted_data,
     mbedtls_sha256_context ctx;
     mbedtls_sha256_init(&ctx);
 
-    int ret = mbedtls_sha256_starts_ret(&ctx, 0);
-    if (ret == 0) ret = mbedtls_sha256_update_ret(&ctx, encrypted_data, encrypted_len);
-    if (ret == 0) ret = mbedtls_sha256_update_ret(&ctx, (const unsigned char *)timestamp, strlen(timestamp));
-    if (ret == 0) ret = mbedtls_sha256_finish_ret(&ctx, output);
+    int ret = mbedtls_sha256_starts(&ctx, 0);
+    if (ret == 0) ret = mbedtls_sha256_update(&ctx, encrypted_data, encrypted_len);
+    if (ret == 0) ret = mbedtls_sha256_update(&ctx, (const unsigned char *)timestamp, strlen(timestamp));
+    if (ret == 0) ret = mbedtls_sha256_finish(&ctx, output);
 
     mbedtls_sha256_free(&ctx);
 

@@ -1,96 +1,86 @@
 # ENIGMA
 
-> Real-time entropy generation, cryptographic signing, and verification system.
+> **Cryptographically Secure Entropy Logging & Verification System**
 >
-> **Chain of Trust:** `Entropy → Hash → Signature → Verification → Storage → Visualization`
+> Real-time entropy generation, AES-128 encryption, SHA-256 hashing, and ECDSA signing with immutable blockchain-anchored storage.
+>
+> **Chain of Trust:** `Image Capture → Entropy Extract → AES Encrypt → SHA-256 Hash → ECDSA Sign → Blockchain Anchor → Verify`
 
 ---
 
-## Architecture
+## 🎯 System Overview
 
-```
-ESP32-S3 (Edge)                Backend (Node.js)          Frontend (React)
-────────────────               ──────────────────         ────────────────
-TRNG entropy                   Signature verify           WebSocket client
-SHA-256 hash        HTTPS      Timestamp check            Live feed
-ECDSA sign          POST ────► DB insert                  History table
-NVS key store                  WS broadcast ──────────►   Verified badge
-```
+**ENIGMA** is a full-stack system for capturing, conditioning, encrypting, and verifying entropy with a complete audit trail:
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the full system diagram.
+1. **Capture:** Laptop camera or external USB camera feeds entropy-rich image data
+2. **Extract:** Backend extracts pseudo-random bitstreams via LSB (Least Significant Bit) analysis
+3. **Condition:** ESP32-S3 firmware hashes raw bitstream using SHA-256 via mbedTLS
+4. **Encrypt:** AES-128-ECB encryption (hardware-accelerated on ESP32-S3)
+5. **Derive:** SHA-256(AES_key || timestamp) → 32-byte integrity hash
+6. **Sign:** ECDSA/P-256 signature generation and verification
+7. **Chain:** Blockchain-anchored records with cryptographic chaining for tamper detection
+8. **Verify:** On-demand verification API to detect any historical tampering
 
 ---
 
-## Project Structure
+## 🏗️ System Architecture
 
 ```
-ENIGMA/
-├── firmware/                   # ESP32-S3 firmware (ESP-IDF 5.x)
-│   ├── main/
-│   │   ├── main.c              # Application entry point
-│   │   ├── entropy.c/h         # Hardware TRNG collection
-│   │   ├── crypto.c/h          # SHA-256 + ECDSA (sign_hash abstraction)
-│   │   ├── storage.c/h         # NVS encrypted key persistence
-│   │   ├── network.c/h         # Wi-Fi + SNTP + HTTPS POST
-│   │   └── config.h            # All compile-time configuration
-│   ├── CMakeLists.txt
-│   └── sdkconfig.defaults
-│
-├── backend/                    # Node.js + Express + Socket.IO
-│   ├── src/
-│   │   ├── index.js            # Server entry point
-│   │   ├── config.js           # Environment configuration
-│   │   ├── logger.js           # Winston structured logging
-│   │   ├── metrics.js          # Prometheus metrics
-│   │   ├── routes/
-│   │   │   └── entropy.js      # REST endpoints
-│   │   ├── services/
-│   │   │   ├── verifier.js     # ECDSA verification (secp256r1)
-│   │   │   └── entropyService.js# Business logic + WS broadcast
-│   │   ├── middleware/
-│   │   │   └── validate.js     # Input validation rules
-│   │   ├── websocket/
-│   │   │   └── index.js        # Socket.IO server
-│   │   └── db/
-│   │       ├── pool.js         # PostgreSQL connection pool
-│   │       └── migrate.js      # Schema migration script
-│   ├── tests/
-│   │   └── entropy.test.js
-│   ├── Dockerfile
-│   └── package.json
-│
-├── frontend/                   # React + Vite + Tailwind
-│   ├── src/
-│   │   ├── App.jsx             # Root component + tab routing
-│   │   ├── hooks/
-│   │   │   └── useEntropy.js   # WebSocket + REST state hook
-│   │   └── components/
-│   │       ├── ConnectionBadge.jsx
-│   │       ├── StatsBar.jsx
-│   │       ├── LiveFeed.jsx
-│   │       ├── HistoryTable.jsx
-│   │       ├── EntropyCard.jsx
-│   │       └── VerificationBadge.jsx
-│   ├── Dockerfile
-│   └── package.json
-│
-├── database/
-│   └── schema.sql              # Full PostgreSQL schema
-│
-├── nginx/
-│   ├── nginx.conf              # Main Nginx config
-│   └── conf.d/
-│       └── enigma.conf         # Virtual host + upstream config
-│
-├── docs/
-│   ├── ARCHITECTURE.md         # System design + data flow
-│   ├── API.md                  # Full API contract
-│   ├── SECURITY.md             # Security model + checklist
-│   └── HARDWARE_UPGRADE.md     # ATECC608A migration guide
-│
-├── docker-compose.yml
-└── .gitignore
+┌─────────────────────────────────────────────────────────────────────┐
+│                        ENIGMA PIPELINE                              │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│  Frontend (React)          Backend (Node.js/Express)  Firmware       │
+│  ─────────────────         ──────────────────────────  ──────────    │
+│                                                                       │
+│  • Camera capture    →  Image validation    →  ESP32-S3 crypto      │
+│  • Live dashboard    →  Entropy extraction  →  • SHA-256 (MbedTLS)  │
+│  • History table     →  AES encryption      →  • AES-128-ECB        │
+│  • Verification UI   →  Signature verify    →  • ECDSA/P-256        │
+│                    →  DB insert            →  • SNTP time-sync      │
+│                    →  WS broadcast         →  • NVS persistence     │
+│                    →  Blockchain anchor    →                        │
+│                                                                       │
+└─────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────┐
+│                     DATA FLOW (Request Cycle)                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                       │
+│ 1. Firmware POSTs to backend:                                        │
+│    POST /api/v1/entropy {                                            │
+│      device_id,           # ESP32 device identifier                  │
+│      timestamp,           # SNTP-synchronized UTC timestamp           │
+│      entropy_hash,        # SHA-256(bitstream)                       │
+│      signature,           # ECDSA signature over hash                │
+│      public_key,          # Uncompressed P-256 (first POST only)     │
+│      image_encrypted,     # AES-encrypted image bits (optional)      │
+│      image_hash           # SHA-256 of original image bits           │
+│    }                                                                  │
+│                                                                       │
+│ 2. Backend verification:                                             │
+│    • Validate timestamp freshness (MAX_TIMESTAMP_SKEW_S = 60s)       │
+│    • Resolve device public key (cache + DB lookup)                   │
+│    • Verify ECDSA signature (secp256r1 DER → SPKI conversion)        │
+│    • Check replay protection (unique device_id/timestamp/hash)       │
+│    • Insert record into PostgreSQL with blockchain status            │
+│                                                                       │
+│ 3. Real-time broadcast:                                              │
+│    • Socket.IO 'entropy:new' event to all connected clients          │
+│    • System stats broadcast (5s interval)                            │
+│    • Device status/presence tracking                                 │
+│                                                                       │
+│ 4. Blockchain anchoring (async):                                     │
+│    • Hardhat local RPC submits anchors to smart contract             │
+│    • Immutable hash chain prevents tampering                         │
+│    • Status tracked in 'pending_blockchain' table                    │
+│                                                                       │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+---
+
+## 📋 Project Structure (Full)
 
 ---
 

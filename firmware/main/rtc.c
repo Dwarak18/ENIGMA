@@ -78,7 +78,7 @@ static esp_err_t rtc_read_datetime(rtc_datetime_t *dt)
     return ESP_OK;
 }
 
-esp_err_t rtc_init(void)
+esp_err_t app_rtc_init(void)
 {
     i2c_config_t conf = {0};
     conf.mode = I2C_MODE_MASTER;

@@ -14,10 +14,25 @@
 
 #include "crypto.h"
 #include "uart.h"
-#include "rtc.h"
+#include "wifi.h"
+#include "ntp.h"
+#include "config.h"
+#include "nvs_flash.h"
 
 #include "esp_log.h"
 #include "esp_err.h"
+#include <time.h>
+
+static void get_ist_timestamp_string(char *out, size_t out_len) {
+    time_t now = 0;
+    time(&now);
+    struct tm timeinfo;
+    time_t ist_time = now + IST_OFFSET_SECS;
+    gmtime_r(&ist_time, &timeinfo);
+    snprintf(out, out_len, "%04d-%02d-%02d %02d:%02d:%02d",
+             timeinfo.tm_year + 1900, timeinfo.tm_mon + 1, timeinfo.tm_mday,
+             timeinfo.tm_hour, timeinfo.tm_min, timeinfo.tm_sec);
+}
 
 static const char *TAG = "main";
 
@@ -31,8 +46,17 @@ void app_main(void)
 {
     ESP_LOGI(TAG, "ENIGMA firmware booting...");
 
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+        ESP_ERROR_CHECK(nvs_flash_erase());
+        ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_ERROR_CHECK(wifi_connect_sta(WIFI_SSID, WIFI_PASSWORD, WIFI_MAX_RETRY));
+    ESP_ERROR_CHECK(ntp_sync_time(SNTP_SYNC_TIMEOUT_MS));
+
     ESP_ERROR_CHECK(uart_module_init());
-    ESP_ERROR_CHECK(rtc_init());
 
     ESP_LOGI(TAG, "System ready. Waiting for UART input...");
 
@@ -56,7 +80,7 @@ void app_main(void)
 
         ESP_LOGI(TAG, "Received %u payload bytes", (unsigned)payload_len);
 
-        err = aes_encrypt(payload_bytes, payload_len, encrypted_bytes, sizeof(encrypted_bytes), &encrypted_len);
+        err = enigma_aes_encrypt(payload_bytes, payload_len, encrypted_bytes, sizeof(encrypted_bytes), &encrypted_len);
         if (err != ESP_OK) {
             ESP_LOGE(TAG, "AES encryption failed: %s", esp_err_to_name(err));
             uart_send_error("encryption_failed");
@@ -64,12 +88,13 @@ void app_main(void)
         }
         ESP_LOGI(TAG, "AES encryption completed (%u bytes)", (unsigned)encrypted_len);
 
-        err = rtc_get_timestamp_string(timestamp_str, sizeof(timestamp_str));
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "RTC read failed: %s", esp_err_to_name(err));
+        uint64_t current_time = get_current_timestamp();
+        if (current_time == 0) {
+            ESP_LOGE(TAG, "SNTP time not synchronized");
             uart_send_error("timestamp_unavailable");
             continue;
         }
+        get_ist_timestamp_string(timestamp_str, sizeof(timestamp_str));
 
         err = compute_integrity_hash(encrypted_bytes, encrypted_len, timestamp_str, final_hash);
         if (err != ESP_OK) {

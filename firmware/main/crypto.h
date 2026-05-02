@@ -17,11 +17,11 @@
 /**
  * @brief AES-128 encryption (ECB + PKCS#7 padding) using fixed 16-byte key.
  */
-esp_err_t aes_encrypt(const uint8_t *input,
-                      size_t len,
-                      uint8_t *output,
-                      size_t output_capacity,
-                      size_t *output_len);
+esp_err_t enigma_aes_encrypt(const uint8_t *input,
+                             size_t len,
+                             uint8_t *output,
+                             size_t output_capacity,
+                             size_t *output_len);
 
 /**
  * @brief Compute SHA-256 for arbitrary input.

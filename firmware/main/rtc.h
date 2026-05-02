@@ -12,7 +12,7 @@
 /**
  * @brief Initialize DS3231 I2C bus.
  */
-esp_err_t rtc_init(void);
+esp_err_t app_rtc_init(void);
 
 /**
  * @brief Read RTC time and return UNIX timestamp.
