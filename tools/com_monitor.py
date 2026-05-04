@@ -47,7 +47,8 @@ DEFAULT_DEVICE_ID = os.environ.get('DEVICE_ID',         'esp32-001')
 POLL_S            = int(os.environ.get('POLL_S',         '3'))
 
 # The specific COM port to watch for the ENIGMA ESP32 device.
-TARGET_PORT = os.environ.get('TARGET_COM_PORT', 'COM7').upper()
+TARGET_PORT = os.environ.get('TARGET_COM_PORT', 'COM3').upper()
+AUTO_LAUNCH_SIMULATOR = os.environ.get('AUTO_LAUNCH_SIMULATOR', 'false').lower() == 'true'
 
 # Path to the firmware Python simulator — resolved relative to this script.
 _TOOLS_DIR      = pathlib.Path(__file__).parent
@@ -181,9 +182,9 @@ def post_status(device_id: str, online: bool, com_port: str | None) -> None:
         if r.status_code == 200:
             state = 'CONNECTED' if online else 'DISCONNECTED'
             log.info('✓ %-12s %s  (port=%s)', device_id, state, com_port or '?')
-            # Automatically start / stop the firmware simulator when the
-            # target COM port (default: COM7) is plugged or unplugged.
-            if com_port and com_port.upper() == TARGET_PORT:
+            # Optional simulator autostart is disabled by default. Real
+            # hardware testing should observe the physical COM port only.
+            if AUTO_LAUNCH_SIMULATOR and com_port and com_port.upper() == TARGET_PORT:
                 if online:
                     launch_firmware(device_id, com_port)
                 else:
@@ -339,7 +340,8 @@ def main() -> None:
     log.info('╚══════════════════════════════════════════════════════════════╝')
     log.info('  backend    : %s', BACKEND_URL)
     log.info('  device     : %s (default)', DEFAULT_DEVICE_ID)
-    log.info('  target port: %s  ← firmware auto-launch enabled', TARGET_PORT)
+    log.info('  target port: %s', TARGET_PORT)
+    log.info('  auto sim    : %s', AUTO_LAUNCH_SIMULATOR)
     log.info('  simulator  : %s', FIRMWARE_SCRIPT)
     log.info('  sim backend: %s', SIMULATOR_BACKEND_URL)
     log.info('  watching   : %s', ', '.join(ESP32_SIGNATURES[:4]) + '…')

@@ -12,8 +12,8 @@
 #define DEVICE_ID              "esp32-001"
 
 /* ── Wi-Fi Credentials ───────────────────────────────── */
-#define WIFI_SSID              "Bala"       /* ← fill in your WiFi name */
-#define WIFI_PASSWORD          "v2i4d0h3u"   /* ← fill in your WiFi password */
+#define WIFI_SSID              "Nothing Phone (4a)"       /* ← fill in your WiFi name */
+#define WIFI_PASSWORD          "31053105"   /* ← fill in your WiFi password */
 #define WIFI_MAX_RETRY         10
 
 /* ── Backend Endpoint ────────────────────────────────── */

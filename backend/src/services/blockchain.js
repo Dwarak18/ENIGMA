@@ -7,6 +7,13 @@ const logger = require('../logger');
 
 let provider = null;
 let wallet = null;
+let contract = null;
+
+const RECORD_STORAGE_ABI = [
+  'function storeRecord(string calldata deviceId, uint256 timestamp, string calldata entropyHash) external',
+  'function records(string) external view returns (string deviceId, uint256 timestamp, string entropyHash, uint256 blockNumber)',
+  'function getRecordCount() external view returns (uint256)',
+];
 
 /**
  * Initialize the Ethereum client using local provider and the backend's private key.
@@ -38,8 +45,7 @@ function initClient() {
 }
 
 /**
- * Anchors a record by sending a 0-value transaction to YOURSELF.
- * The entropy hash is embedded in the transaction DATA field.
+ * Anchors a record in the RecordStorage smart contract.
  */
 async function storeHashOnChain(deviceId, timestamp, hash) {
   const signer = initClient();
@@ -50,23 +56,26 @@ async function storeHashOnChain(deviceId, timestamp, hash) {
   }
 
   try {
-    // 1. Encode the hash as hex data (utf8 -> hex)
-    const dataString = `ARGUS|${deviceId}|${hash}`;
-    const hexData = ethers.hexlify(ethers.toUtf8Bytes(dataString));
+    if (!config.blockchain.contractAddress || !ethers.isAddress(config.blockchain.contractAddress)) {
+      const err = new Error('CONTRACT_ADDRESS is missing or invalid');
+      err.code = 'CONTRACT_UNAVAILABLE';
+      throw err;
+    }
 
-    logger.info('Sending minimal anchor transaction to local node...', { deviceId });
+    if (!contract) {
+      contract = new ethers.Contract(
+        config.blockchain.contractAddress,
+        RECORD_STORAGE_ABI,
+        signer
+      );
+    }
 
-    // 2. Send transaction to self
-    const tx = await signer.sendTransaction({
-      to: signer.address,
-      value: 0,
-      data: hexData
-    });
+    logger.info('Anchoring record in RecordStorage...', { deviceId, timestamp });
+
+    const tx = await contract.storeRecord(deviceId, timestamp, hash);
     
-    logger.info('Transaction submitted!', { txHash: tx.hash });
+    logger.info('RecordStorage transaction submitted', { txHash: tx.hash });
     
-    // We don't wait for confirmation here to keep the API fast, 
-    // the retry worker will handle confirmation if needed.
     return tx.hash;
   } catch (err) {
     logger.error('Blockchain transaction failed', { error: err.message });

@@ -132,9 +132,9 @@ start_backend() {
     cd "$BACKEND_DIR"
     # Use nodemon in dev, plain node otherwise
     if [[ -x "$(command -v npx)" ]] && [[ -f "node_modules/.bin/nodemon" ]]; then
-      exec npx nodemon src/index.js
+      exec npx nodemon src/server.js
     else
-      exec node src/index.js
+      exec node src/server.js
     fi
   ) &
   BACKEND_PID=$!

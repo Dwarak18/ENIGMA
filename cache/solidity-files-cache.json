@@ -1,0 +1,77 @@
+{
+  "_format": "hh-sol-cache-2",
+  "files": {
+    "C:\\Users\\Dwarak\\Documents\\GitHub\\ENIGMA\\contracts\\RecordStorage.sol": {
+      "lastModificationDate": 1777905616371,
+      "contentHash": "25ff620e0df29457a630204b88150ef5",
+      "sourceName": "contracts/RecordStorage.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "RecordStorage"
+      ]
+    },
+    "C:\\Users\\Dwarak\\Documents\\GitHub\\ENIGMA\\contracts\\Storage.sol": {
+      "lastModificationDate": 1777905616371,
+      "contentHash": "f695dc03a33e582bfdefcd51dd0ba572",
+      "sourceName": "contracts/Storage.sol",
+      "solcConfig": {
+        "version": "0.8.20",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.20"
+      ],
+      "artifacts": [
+        "Storage"
+      ]
+    }
+  }
+}

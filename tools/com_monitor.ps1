@@ -22,7 +22,8 @@ $DefaultDevice = if ($env:DEVICE_ID)   { $env:DEVICE_ID }   else { "esp32-001" }
 $ApiEndpoint   = "$BackendUrl/api/v1/system/device-status"
 
 # The specific COM port to watch for the ENIGMA ESP32 device.
-$TargetPort    = if ($env:TARGET_COM_PORT) { $env:TARGET_COM_PORT.ToUpper() } else { "COM7" }
+$TargetPort    = if ($env:TARGET_COM_PORT) { $env:TARGET_COM_PORT.ToUpper() } else { "COM3" }
+$AutoLaunchSimulator = if ($env:AUTO_LAUNCH_SIMULATOR) { $env:AUTO_LAUNCH_SIMULATOR.ToLower() -eq "true" } else { $false }
 
 # Path to the firmware Python simulator – resolved relative to this script.
 $FirmwareScript = if ($env:FIRMWARE_SCRIPT) {
@@ -133,8 +134,9 @@ function Send-DeviceStatus {
                     -ErrorAction Stop
         $state = if ($Online) { "CONNECTED" } else { "DISCONNECTED" }
         Write-Log "INFO" "OK  $DeviceId  $state  (port=$ComPort)"
-        # Auto-launch/stop the firmware simulator when the target COM port changes
-        if ($ComPort -and $ComPort.ToUpper() -eq $TargetPort) {
+        # Optional simulator autostart is disabled by default. Real hardware
+        # testing should observe the physical COM port only.
+        if ($AutoLaunchSimulator -and $ComPort -and $ComPort.ToUpper() -eq $TargetPort) {
             if ($Online) {
                 Start-FirmwareSimulator -DeviceId $DeviceId -ComPort $ComPort
             } else {
@@ -188,7 +190,8 @@ Write-Host "====================================================================
 Write-Host ""
 Write-Log "INFO" "Backend  : $BackendUrl"
 Write-Log "INFO" "Device   : $DefaultDevice (default)"
-Write-Log "INFO" "Target   : $TargetPort  (firmware auto-launch port)"
+Write-Log "INFO" "Target   : $TargetPort"
+Write-Log "INFO" "Auto sim : $AutoLaunchSimulator"
 Write-Log "INFO" "Keywords : $($Esp32Keywords -join ', ')"
 Write-Host ""
 

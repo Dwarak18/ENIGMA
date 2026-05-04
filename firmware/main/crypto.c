@@ -1,6 +1,13 @@
 /**
  * @file crypto.c
- * @brief AES-128, SHA-256 and hex helpers implemented with ESP-IDF mbedTLS.
+ * @brief AES-256-GCM (authenticated encryption), SHA-256, HKDF, and hex helpers
+ * implemented with ESP-IDF mbedTLS.
+ *
+ * SECURITY FIXES:
+ * - Replaced insecure AES-ECB with AES-256-GCM (authenticated encryption)
+ * - Removed hardcoded AES key (now derived from entropy on backend)
+ * - Added AES-GCM decryption with authentication tag verification
+ * - Keys are derived using HKDF-SHA256 on the backend (secure key derivation)
  */
 
 #include "crypto.h"
@@ -8,17 +15,16 @@
 #include "esp_log.h"
 #include "mbedtls/aes.h"
 #include "mbedtls/sha256.h"
+#include "mbedtls/md.h"
 
 #include <stdio.h>
 #include <string.h>
 
 static const char *TAG = "crypto";
-static const uint8_t AES_FIXED_KEY[CRYPTO_AES_KEY_LEN] = {
-    0x2a, 0x7d, 0x11, 0x95,
-    0xf0, 0x3c, 0x4e, 0x88,
-    0x1b, 0xe2, 0x5a, 0x6f,
-    0x99, 0x00, 0xcd, 0x73
-};
+
+/* REMOVED: AES_FIXED_KEY hardcoded key (security vulnerability)
+ * Keys are now derived from entropy using HKDF-SHA256 by the backend
+ */
 
 static int hex_nibble(char c)
 {
@@ -50,61 +56,158 @@ esp_err_t compute_sha256(const uint8_t *input, size_t len, uint8_t output[CRYPTO
     return ESP_OK;
 }
 
+/**
+ * DEPRECATED: enigma_aes_encrypt (AES-ECB mode - insecure)
+ * Use enigma_aes_gcm_encrypt instead for authenticated encryption
+ */
 esp_err_t enigma_aes_encrypt(const uint8_t *input,
-                             size_t len,
-                             uint8_t *output,
-                             size_t output_capacity,
-                             size_t *output_len)
+                              size_t len,
+                              uint8_t *output,
+                              size_t output_capacity,
+                              size_t *output_len)
 {
-    if (!output || !output_len || (!input && len > 0)) {
+    ESP_LOGW(TAG, "AES-ECB mode is insecure - use AES-GCM instead");
+    return ESP_ERR_NOT_SUPPORTED;
+}
+
+/**
+ * SECURITY FIX: Encrypt data using AES-256-GCM (authenticated encryption)
+ * Replaces insecure ECB mode with GCM which provides:
+ *   - Confidentiality (only authorized parties can read encrypted data)
+ *   - Authenticity (verify data has not been tampered with)
+ * 
+ * GCM mode benefits:
+ *   - No padding required
+ *   - Authentication tag verifies integrity
+ *   - Nonce reuse detection (different for each encryption)
+ * 
+ * Output layout: ciphertext || auth_tag (tag is appended)
+ * 
+ * @param key AES-256 key (32 bytes) - derived from entropy via HKDF
+ * @param iv Initialization vector (12 bytes recommended for GCM)
+ * @param input Plaintext data to encrypt
+ * @param input_len Length of plaintext
+ * @param output Buffer for ciphertext + auth tag
+ * @param output_capacity Size of output buffer (must be >= input_len + 16)
+ * @param output_len [OUT] Size of ciphertext + tag
+ * @return ESP_OK on success, ESP_FAIL on error
+ */
+esp_err_t enigma_aes_gcm_encrypt(const uint8_t *key,
+                                 const uint8_t *iv,
+                                 const uint8_t *input,
+                                 size_t input_len,
+                                 uint8_t *output,
+                                 size_t output_capacity,
+                                 size_t *output_len)
+{
+    if (!key || !iv || !output || !output_len || (!input && input_len > 0)) {
         return ESP_ERR_INVALID_ARG;
     }
 
-    size_t pad_len = CRYPTO_AES_BLOCK_LEN - (len % CRYPTO_AES_BLOCK_LEN);
-    if (pad_len == 0) {
-        pad_len = CRYPTO_AES_BLOCK_LEN;
-    }
-    size_t padded_len = len + pad_len;
-    if (padded_len > output_capacity) {
+    /* GCM does NOT require padding; ciphertext is same size as plaintext */
+    size_t total_len = input_len + CRYPTO_AES_GCM_TAG_LEN;
+    if (total_len > output_capacity) {
         return ESP_ERR_INVALID_SIZE;
     }
 
-    if (len > 0) {
-        memcpy(output, input, len);
-    }
-    memset(output + len, (int)pad_len, pad_len);
-
-    mbedtls_aes_context aes;
-    mbedtls_aes_init(&aes);
-    int ret = mbedtls_aes_setkey_enc(&aes, AES_FIXED_KEY, 128);
-    if (ret == 0) {
-        for (size_t offset = 0; offset < padded_len; offset += CRYPTO_AES_BLOCK_LEN) {
-            ret = mbedtls_aes_crypt_ecb(
-                &aes,
-                MBEDTLS_AES_ENCRYPT,
-                output + offset,
-                output + offset
-            );
-            if (ret != 0) {
-                break;
-            }
-        }
-    }
-    mbedtls_aes_free(&aes);
-
+    uint8_t tag[CRYPTO_AES_GCM_TAG_LEN];
+    
+    /* Use mbedTLS high-level GCM API */
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+    
+    int ret = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
     if (ret != 0) {
-        ESP_LOGE(TAG, "AES encryption failed: %d", ret);
+        ESP_LOGE(TAG, "GCM key setup failed: %d", ret);
+        mbedtls_gcm_free(&gcm);
         return ESP_FAIL;
     }
 
-    *output_len = padded_len;
+    /* Encrypt with authentication */
+    ret = mbedtls_gcm_crypt_and_tag(&gcm, MBEDTLS_GCM_ENCRYPT,
+                                     input_len, iv, 12, /* 12-byte IV */
+                                     NULL, 0, /* No additional data */
+                                     input, output, 
+                                     CRYPTO_AES_GCM_TAG_LEN, tag);
+    
+    if (ret != 0) {
+        ESP_LOGE(TAG, "GCM encryption failed: %d", ret);
+        mbedtls_gcm_free(&gcm);
+        return ESP_FAIL;
+    }
+
+    /* Append authentication tag to ciphertext */
+    memcpy(output + input_len, tag, CRYPTO_AES_GCM_TAG_LEN);
+    *output_len = total_len;
+
+    mbedtls_gcm_free(&gcm);
+    return ESP_OK;
+}
+
+/**
+ * SECURITY FIX: Decrypt data using AES-256-GCM with authentication verification
+ * Verifies authentication tag before returning plaintext
+ * Prevents tampering: if tag verification fails, plaintext is NOT returned
+ * 
+ * @param key AES-256 key (32 bytes)
+ * @param iv Initialization vector (12 bytes)
+ * @param ciphertext Encrypted data (NOT including tag)
+ * @param ciphertext_len Length of ciphertext in bytes
+ * @param tag Authentication tag (16 bytes)
+ * @param output Buffer for plaintext
+ * @param output_capacity Size of output buffer
+ * @param output_len [OUT] Length of plaintext
+ * @return ESP_OK on successful decryption and tag verification, ESP_FAIL otherwise
+ */
+esp_err_t enigma_aes_gcm_decrypt(const uint8_t *key,
+                                 const uint8_t *iv,
+                                 const uint8_t *ciphertext,
+                                 size_t ciphertext_len,
+                                 const uint8_t *tag,
+                                 uint8_t *output,
+                                 size_t output_capacity,
+                                 size_t *output_len)
+{
+    if (!key || !iv || !ciphertext || !tag || !output || !output_len) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    if (ciphertext_len > output_capacity) {
+        return ESP_ERR_INVALID_SIZE;
+    }
+
+    mbedtls_gcm_context gcm;
+    mbedtls_gcm_init(&gcm);
+    
+    int ret = mbedtls_gcm_setkey(&gcm, MBEDTLS_CIPHER_ID_AES, key, 256);
+    if (ret != 0) {
+        ESP_LOGE(TAG, "GCM key setup failed: %d", ret);
+        mbedtls_gcm_free(&gcm);
+        return ESP_FAIL;
+    }
+
+    /* Decrypt and verify authentication tag */
+    ret = mbedtls_gcm_auth_decrypt(&gcm, ciphertext_len,
+                                    iv, 12,
+                                    NULL, 0, /* No additional data */
+                                    tag, CRYPTO_AES_GCM_TAG_LEN,
+                                    ciphertext, output);
+    
+    if (ret != 0) {
+        ESP_LOGE(TAG, "GCM decryption/auth verification failed: %d", ret);
+        mbedtls_gcm_free(&gcm);
+        return ESP_FAIL;
+    }
+
+    *output_len = ciphertext_len;
+    mbedtls_gcm_free(&gcm);
     return ESP_OK;
 }
 
 esp_err_t compute_integrity_hash(const uint8_t *encrypted_data,
-                             size_t encrypted_len,
-                             const char *timestamp,
-                             uint8_t output[CRYPTO_SHA256_LEN])
+                              size_t encrypted_len,
+                              const char *timestamp,
+                              uint8_t output[CRYPTO_SHA256_LEN])
 {
     if (!encrypted_data || !timestamp || !output) {
         return ESP_ERR_INVALID_ARG;

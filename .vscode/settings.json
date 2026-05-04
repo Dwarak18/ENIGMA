@@ -7,5 +7,13 @@
     "idf.portWin": "COM3",
     "files.associations": {
         "*.sol": "solidity"
+    },
+    "chat.mcp.serverSampling": {
+        "ENIGMA/.vscode/mcp.json: playwright": {
+            "allowedModels": [
+                "copilot/auto",
+                "copilotcli/claude-haiku-4.5"
+            ]
+        }
     }
 }

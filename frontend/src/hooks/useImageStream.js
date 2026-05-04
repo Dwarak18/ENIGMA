@@ -8,7 +8,8 @@
  */
 
 import { useEffect, useState, useCallback } from 'react';
-import { useEnigmaAPI } from './useEnigmaAPI';
+import { io } from 'socket.io-client';
+import { API_BASE_URL } from './useEnigmaAPI';
 
 /**
  * Hook to listen for real-time image streams from a specific device
@@ -16,19 +17,30 @@ import { useEnigmaAPI } from './useEnigmaAPI';
  * @returns {object} - { streams, isConnected, error }
  */
 export function useImageStream(deviceId = null) {
-  const { socket } = useEnigmaAPI();
   const [streams, setStreams] = useState([]);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!socket || !socket.connected) {
-      setIsConnected(false);
-      return;
-    }
+    const socket = io(API_BASE_URL, {
+      transports: ['websocket', 'polling'],
+      reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
+    });
 
-    setIsConnected(true);
-    setError(null);
+    socket.on('connect', () => {
+      setIsConnected(true);
+      setError(null);
+    });
+
+    socket.on('disconnect', () => {
+      setIsConnected(false);
+    });
+
+    socket.on('connect_error', (err) => {
+      setIsConnected(false);
+      setError(err);
+    });
 
     /**
      * Handler for image:stream events from WebSocket
@@ -59,9 +71,9 @@ export function useImageStream(deviceId = null) {
     socket.on('image:stream', handleImageStream);
 
     return () => {
-      socket.off('image:stream', handleImageStream);
+      socket.disconnect();
     };
-  }, [socket, deviceId]);
+  }, [deviceId]);
 
   return { streams, isConnected, error };
 }
@@ -85,7 +97,7 @@ export function useImageStreamHistory(deviceId, limit = 50) {
 
     try {
       const response = await fetch(
-        `/api/v1/image-streams/${encodeURIComponent(deviceId)}/history?limit=${limit}`,
+        `${API_BASE_URL}/api/v1/image-streams/${encodeURIComponent(deviceId)}/history?limit=${limit}`,
         { method: 'GET' }
       );
 
@@ -134,7 +146,7 @@ export function useLatestImageStream(deviceId, pollIntervalMs = 5000) {
 
     try {
       const response = await fetch(
-        `/api/v1/image-streams/${encodeURIComponent(deviceId)}/latest`,
+        `${API_BASE_URL}/api/v1/image-streams/${encodeURIComponent(deviceId)}/latest`,
         { method: 'GET' }
       );
 

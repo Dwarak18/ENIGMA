@@ -1,14 +1,14 @@
 import hre from "hardhat";
 
 async function main() {
-  console.log("Deploying Storage contract...");
-  const Storage = await hre.ethers.getContractFactory("Storage");
-  const storage = await Storage.deploy();
+  console.log("Deploying RecordStorage contract...");
+  const RecordStorage = await hre.ethers.getContractFactory("RecordStorage");
+  const storage = await RecordStorage.deploy();
 
   await storage.waitForDeployment();
 
   const address = await storage.getAddress();
-  console.log(`Storage contract deployed to: ${address}`);
+  console.log(`RecordStorage contract deployed to: ${address}`);
 }
 
 main().catch((error) => {

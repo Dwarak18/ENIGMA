@@ -1,0 +1,45 @@
+{
+  "collection_time": "2026-05-03T22:17:47.221603",
+  "latency": {
+    "end_to_end_latency_ms": {
+      "count": 1000,
+      "min": 237.49303817749023,
+      "max": 2044.0928936004639,
+      "mean": 619.50381731987,
+      "median": 629.6290159225464,
+      "stdev": 134.89164138740475,
+      "p95": 759.7045063972473,
+      "p99": 773.796136379242
+    },
+    "per_stage_estimate": {
+      "capture_latency_ms": 92.92557259798049,
+      "compression_latency_ms": 123.900763463974,
+      "hash_latency_ms": 92.92557259798049,
+      "encryption_latency_ms": 92.92557259798049,
+      "signing_latency_ms": 123.900763463974,
+      "network_latency_ms": 61.950381731987,
+      "storage_latency_ms": 30.9751908659935
+    }
+  },
+  "throughput": {
+    "requests_per_second": 0.0032247799236679495,
+    "requests_per_minute": 0.19348679542007696,
+    "requests_per_hour": 11.609207725204618,
+    "requests_per_day": 278.6209854049108,
+    "total_requests": 1214,
+    "measurement_duration_hours": 104.57216622666667
+  },
+  "reliability": {
+    "total_submissions": 1214,
+    "successful_submissions": 1214,
+    "failed_submissions": 0,
+    "success_rate_percent": 100.0,
+    "failure_rate_percent": 0.0
+  },
+  "storage": {
+    "database_name": "enigma_db",
+    "database_size_text": "9911 kB",
+    "total_records": 1214,
+    "estimated_bytes_per_record": 1024
+  }
+}

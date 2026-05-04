@@ -5,7 +5,10 @@
 
 import { useState, useCallback } from 'react';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+export const API_BASE_URL =
+  import.meta.env.VITE_API_URL ||
+  import.meta.env.VITE_BACKEND_URL ||
+  '';
 const PLACEHOLDER_PUBLIC_KEY = `04${'0'.repeat(128)}`;
 
 export const useEnigmaAPI = () => {
