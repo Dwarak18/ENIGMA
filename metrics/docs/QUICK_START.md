@@ -358,8 +358,8 @@ Performance is consistent across devices, with [< 10%] variance.
 ## Need Help?
 
 - **Data extraction issues?** → See `metrics/docs/USING_REAL_DATA.md`
-- **Understanding the flow?** → See `docs/END_TO_END_FLOW.md`
-- **Setting up locally?** → See `docs/LOCAL_SETUP_GUIDE.md`
+- **Understanding the flow?** → See `docs/ARCHITECTURE.md`
+- **Setting up locally?** → See `docs/SETUP.md`
 - **Understanding metrics?** → See `metrics/docs/README.md`
 - **All comparisons?** → See `metrics/docs/REAL_VS_SAMPLE_DATA.md`
 - **Complete guide?** → See `metrics/docs/COMPLETE_WORKFLOW.md` (this file)

@@ -1,136 +1,44 @@
-# ENIGMA – System Architecture
+# ENIGMA Architecture
 
-## Overview
+## Core pipeline
 
-ENIGMA is a real-time entropy generation and cryptographic signing system with
-end-to-end verification. It treats the pipeline:
-
-```
-Entropy → Hash → Signature → Verification → Storage → Visualization
-```
-
-as an unbroken **chain of trust**.
-
----
-
-## Component Diagram
-
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                         EDGE LAYER                                   │
-│                                                                      │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  ESP32-S3 Firmware (IDF 5.x)                                │    │
-│  │                                                             │    │
-│  │  entropy.c ──► crypto.c ──► network.c                       │    │
-│  │  (TRNG)        (SHA-256      (HTTPS POST)                   │    │
-│  │                 ECDSA sign)                                  │    │
-│  │                                                             │    │
-│  │  storage.c  – NVS encrypted keypair persistence             │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-│                              │ HTTPS                                 │
-└──────────────────────────────┼───────────────────────────────────────┘
-                               │
-┌──────────────────────────────▼───────────────────────────────────────┐
-│                      TRANSPORT LAYER                                 │
-│                      Nginx (TLS termination)                         │
-└──────────────────────────────┬───────────────────────────────────────┘
-                               │
-          ┌────────────────────┼────────────────────┐
-          │                   │                    │
-          ▼                   ▼                    ▼
-  POST /api/v1/entropy   WebSocket           Static SPA
-          │             (Socket.IO)          (frontend)
-          │
-┌─────────▼──────────────────────────────────────────────────────────┐
-│                     BACKEND LAYER (Node.js)                        │
-│                                                                    │
-│  ┌──────────────┐  ┌──────────────────┐  ┌────────────────────┐  │
-│  │  routes/     │  │  services/       │  │  websocket/        │  │
-│  │  entropy.js  │─►│  verifier.js     │  │  index.js          │  │
-│  │              │  │  (ECDSA verify)  │  │  (Socket.IO)       │  │
-│  └──────────────┘  │                  │  └────────────────────┘  │
-│                    │  entropyService  │─────────────────────────►│  │
-│                    │  .js             │   emit('entropy:new')    │  │
-│                    │  (persist + emit)│                          │  │
-│                    └──────────────────┘                          │  │
-│                              │                                   │  │
-│                    ┌─────────▼──────────┐                        │  │
-│                    │  db/pool.js (pg)   │                        │  │
-│                    └─────────┬──────────┘                        │  │
-└──────────────────────────────┼─────────────────────────────────── ┘
-                               │
-┌──────────────────────────────▼───────────────────────────────────────┐
-│                    DATABASE LAYER (PostgreSQL)                       │
-│                                                                      │
-│   devices            entropy_records                                 │
-│   ──────────         ────────────────────                            │
-│   device_id PK       id (UUID) PK                                    │
-│   public_key         device_id FK                                    │
-│   first_seen         timestamp                                       │
-│   last_seen          entropy_hash                                    │
-│                      signature                                       │
-│                      created_at                                      │
-│                      UNIQUE(device_id, timestamp, entropy_hash)      │
-└──────────────────────────────────────────────────────────────────────┘
+```text
+Device/Simulator
+  -> POST /api/v1/entropy
+  -> validation + signature verification
+  -> PostgreSQL write (replay-protected)
+  -> websocket broadcast (entropy:new)
+  -> optional blockchain anchor retry worker
 ```
 
----
+## Runtime components
 
-## Data Flow
+| Component | Entry point | Responsibility |
+|---|---|---|
+| Backend API | `backend/src/server.js` | REST routes, websocket server, blockchain retry worker |
+| Entropy flow | `backend/src/routes/entropy.js`, `backend/src/services/entropyService.js` | Validation, signature verification, persistence, events |
+| System/status flow | `backend/src/routes/system.js` | Device heartbeat/watchdog, dashboard system state |
+| Frontend app | `frontend/src/App.jsx` | Live dashboard, websocket consumers, API views |
+| Database | `database/schema.sql` | `devices`, `entropy_records`, `image_streams`, `pending_blockchain` |
+| Contracts | `contracts/*.sol` | Local Hardhat anchoring contract logic |
+| Firmware simulator | `firmware/simulate.py` | ESP32-like payload/signature generation for local testing |
+| Device listener | `tools/device_listener/listener.py` | Serial bridge + device status updates |
 
-```
-1. ESP32 collects 64 bytes from hardware TRNG
-2. SHA-256(entropy_bytes ‖ timestamp_le8) = 32-byte hash
-3. ECDSA sign(hash, private_key) = 64-byte raw sig (r‖s)
-4. JSON POST → Nginx → Backend
-5. Backend validates schema
-6. Backend checks timestamp freshness (±60s)
-7. Backend resolves public key (cache → DB → payload)
-8. ECDSA verify(hash, signature, public_key) — MUST pass
-9. INSERT into entropy_records (unique constraint = replay defence)
-10. io.emit('entropy:new', record) → all WebSocket clients
-11. Frontend renders record with verified badge
-```
+## Data and trust model
 
----
+1. Device sends `device_id`, `timestamp`, `entropy_hash`, `signature` (+ optional `public_key`).
+2. Backend enforces timestamp skew and payload shape.
+3. Signature format is raw `r||s` hex and key format is uncompressed P-256 hex.
+4. Backend verifies signature and writes record.
+5. Replay protection is guaranteed by unique `(device_id, timestamp, entropy_hash)`.
+6. Realtime consumers receive `entropy:new` and related system events over Socket.IO.
 
-## Module Responsibilities
+## Online/offline semantics
 
-| Module         | Responsibility                                                     |
-|----------------|--------------------------------------------------------------------|
-| `entropy.c`    | Collect raw entropy (TRNG + future camera/ADC)                     |
-| `crypto.c`     | SHA-256 hashing + **sign_hash() abstraction boundary**            |
-| `storage.c`    | NVS keypair persistence (encrypted partition)                      |
-| `network.c`    | Wi-Fi join, SNTP sync, HTTPS POST                                  |
-| `verifier.js`  | Node.js ECDSA verification (secp256r1, DER conversion)             |
-| `entropyService.js` | Business logic: validate → verify → persist → broadcast       |
-| `websocket/`   | Socket.IO lifecycle and event management                           |
-| `routes/`      | HTTP request parsing and response formatting                       |
-| `db/`          | PostgreSQL pool, migrations, schema                                |
-| `App.jsx`      | React root – tab routing, WebSocket connection                     |
-| `useEntropy.js`| Custom hook – Socket.IO state management + REST history load       |
+Device status in API/UI is sourced from in-memory watchdog state in the backend, not only from database timestamps.
 
----
+## Environment shape
 
-## Scalability Design
-
-- **Backend is stateless** (except DB) – can be horizontally scaled
-- **Public key cache** in memory per instance; DB is source of truth
-- **Postgres** handles concurrent writes with unique index
-- **Socket.IO** can be clustered with Redis adapter (future)
-- **Multiple devices** supported via `device_id` routing
-- **Nginx** handles TLS termination, load balancing, rate limiting
-
----
-
-## Future Extensions
-
-| Feature                      | Where to change              |
-|------------------------------|------------------------------|
-| ATECC608A hardware signing   | `crypto.c` – `sign_hash()` only |
-| Camera entropy source        | `entropy.c` – `entropy_collect()` |
-| Blockchain anchoring         | `entropyService.js` – post-insert hook |
-| Merkle tree batching         | New `merkle.js` service       |
-| Redis WebSocket clustering   | `websocket/index.js` + adapter |
-| Device JWT auth              | New `auth` middleware          |
+- Local compose stack: PostgreSQL + Hardhat + backend + frontend + simulator + device listener.
+- Backend default port: `3000`.
+- Frontend dev port: `5173` (Vite).

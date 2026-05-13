@@ -6,6 +6,8 @@ yarn-debug.log*
 # ── Build outputs ─────────────────────────────────────
 dist/
 build/
+artifacts/
+cache/
 
 # ── Python caches ──────────────────────────────────────
 __pycache__/
@@ -48,6 +50,8 @@ firmware/build/
 firmware/sdkconfig
 firmware/managed_components/
 firmware/.pytest_cache/
+backend/captured_images/
+backend/*.db
 
 # ── Certificates (generate locally, use secrets manager) ──
 nginx/certs/*.pem

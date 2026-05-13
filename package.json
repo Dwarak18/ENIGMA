@@ -1,13 +1,15 @@
 {
   "name": "enigma",
   "version": "1.0.0",
-  "description": "> Real-time entropy generation, cryptographic signing, and verification system.\r >\r > **Chain of Trust:** `Entropy → Hash → Signature → Verification → Storage → Visualization`",
+  "description": "ENIGMA: entropy generation, cryptographic signing, verification, and blockchain anchoring.",
   "main": "hardhat.config.js",
   "directories": {
     "doc": "docs"
   },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "contracts:compile": "hardhat compile",
+    "contracts:test": "hardhat test",
+    "test": "hardhat test"
   },
   "repository": {
     "type": "git",

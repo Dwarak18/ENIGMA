@@ -1,208 +1,77 @@
-# ENIGMA – API Contract
+# ENIGMA API
 
-## Base URL
+Base URL (local): `http://localhost:3000`
 
-```
-https://your-domain.example.com/api/v1
-```
+## Core endpoints
 
----
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/entropy` | Submit signed entropy payload |
+| POST | `/api/v1/entropy/data` | Alias for `/api/v1/entropy` |
+| GET | `/api/v1/entropy/latest` | Most recent record |
+| GET | `/api/v1/entropy/history?limit=100` | Recent records |
+| GET | `/api/v1/entropy/anchored` | Confirmed blockchain anchors |
+| POST | `/api/v1/entropy/verify/:id` | Verify stored record by id/hash key |
+| POST | `/api/v1/entropy/submit-hash` | Manual hash submit to blockchain service |
 
-## Authentication
+## Image stream endpoints
 
-Version 1 uses no API key. The chain of trust is established by ECDSA signature
-verification on every request. Rate-limiting and IP filtering provide perimeter
-defence. Future versions may add device JWT tokens issued at registration.
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/api/v1/image-streams/capture` | Capture/store encrypted image stream |
+| GET | `/api/v1/image-streams/:device_id/latest` | Latest stream for device |
+| GET | `/api/v1/image-streams/:device_id/history?limit=20` | Stream history for device |
 
----
+## System endpoints
 
-## Endpoints
+| Method | Path | Purpose |
+|---|---|---|
+| GET | `/api/v1/system/status` | Dashboard system + devices status |
+| POST | `/api/v1/system/device-status` | Force online/offline from device listener |
+| GET | `/api/v1/system/uptime` | Backend uptime summary |
+| GET | `/api/v1/system/trng-status` | TRNG state machine status |
+| GET | `/api/v1/system/blockchain-config` | Blockchain UI/runtime config |
+| GET | `/api/agent/status` | Blockchain agent summary and recent jobs |
 
-### POST `/entropy`
+## Health
 
-Submit a signed entropy record from an edge device.
-
-#### Request
-
-```http
-POST /api/v1/entropy
-Content-Type: application/json
-```
-
-```json
-{
-  "device_id":       "esp32-001",
-  "timestamp":       1700000000,
-  "entropy_hash":    "a3f1...d9c4",
-  "signature":       "4f2e...88b0",
-  "public_key":      "0482...3c1a",
-  "rtc_time":        "15:30:45",
-  "aes_ciphertext":  "7b3e...9f2a",
-  "aes_iv":          "1c4d...8e5b",
-  "image_encrypted": "9a2f...4c8d",
-  "image_iv":        "5e7a...3b1c",
-  "image_hash":      "2d8c...6f4e"
-}
-```
-
-| Field             | Type    | Required | Description                                          |
-|-------------------|---------|----------|------------------------------------------------------|
-| `device_id`       | string  | ✓        | Device identifier (max 64 chars)                    |
-| `timestamp`       | integer | ✓        | UNIX epoch seconds (must be within ±60s of server)  |
-| `entropy_hash`    | string  | ✓        | 64-char lowercase hex SHA-256 digest                |
-| `signature`       | string  | ✓        | 128-char lowercase hex raw ECDSA r‖s signature      |
-| `public_key`      | string  | ✗        | 130-char hex uncompressed P-256 key (sent once)     |
-| `rtc_time`        | string  | ✗        | "HH:MM:SS" format from DS3231 RTC                   |
-| `aes_ciphertext`  | string  | ✗        | 32-char hex AES-256-CBC ciphertext (16-byte block)  |
-| `aes_iv`          | string  | ✗        | 32-char hex AES IV (16 bytes)                       |
-| `image_encrypted` | string  | ✗        | 16-64 char hex AES encrypted image bitstream        |
-| `image_iv`        | string  | ✗        | 32-char hex AES IV for image decryption             |
-| `image_hash`      | string  | ✗        | 64-char hex SHA-256 of original image bitstream     |
-
-#### Responses
-
-| Code | Body                                     | Meaning                         |
-|------|------------------------------------------|---------------------------------|
-| 201  | `{ ok: true, data: <record> }`           | Accepted, stored, broadcast     |
-| 400  | `{ ok: false, code, message }`           | Validation / signature failure  |
-| 409  | `{ ok: false, code: "REPLAY_DETECTED" }` | Duplicate submission            |
-| 429  | `{ ok: false, code: "RATE_LIMITED" }`    | Too many requests               |
-| 500  | `{ ok: false, code: "INTERNAL_ERROR" }`  | Server error                    |
-
-**Error codes:**
-
-| Code                | Meaning                                      |
-|---------------------|----------------------------------------------|
-| `VALIDATION_ERROR`  | Missing / malformed required fields          |
-| `STALE_TIMESTAMP`   | Timestamp outside ±60s window                |
-| `UNKNOWN_DEVICE`    | Device not registered and no public_key sent |
-| `INVALID_SIGNATURE` | ECDSA verification failed                    |
-| `REPLAY_DETECTED`   | Same (device_id, timestamp, hash) seen before|
-
----
-
-### GET `/entropy/latest`
-
-Returns the most recent validated entropy record.
-
-```http
-GET /api/v1/entropy/latest
-```
-
-#### Response 200
+`GET /health`
 
 ```json
 {
-  "ok": true,
-  "data": {
-    "id":           "550e8400-e29b-41d4-a716-446655440000",
-    "device_id":    "esp32-001",
-    "timestamp":    1700000000,
-    "entropy_hash": "a3f1...d9c4",
-    "signature":    "4f2e...88b0",
-    "created_at":   "2025-02-25T10:00:00.000Z"
-  }
+  "status": "ok",
+  "timestamp": "2026-01-01T12:00:00.000Z"
 }
 ```
 
-#### Response 404
+## Entropy payload contract
 
-```json
-{ "ok": false, "code": "NOT_FOUND" }
-```
+Required fields:
+- `device_id` (string)
+- `timestamp` (unix epoch seconds)
+- `entropy_hash` (64-char hex)
+- `signature` (128-char hex raw `r||s`)
 
----
+Optional fields:
+- `public_key` (130-char hex, uncompressed P-256)
+- `aes_ciphertext`, `aes_iv`, `rtc_time`
+- `image_encrypted`, `image_iv`, `image_hash`
 
-### GET `/entropy/history`
-
-Returns a paginated list of validated entropy records, newest first.
-
-```http
-GET /api/v1/entropy/history?limit=100
-```
-
-| Query param | Type    | Default | Max  |
-|-------------|---------|---------|------|
-| `limit`     | integer | 100     | 1000 |
-
-#### Response 200
+Error shape:
 
 ```json
 {
-  "ok":    true,
-  "count": 42,
-  "data":  [ /* array of record objects */ ]
+  "ok": false,
+  "code": "VALIDATION_ERROR|STALE_TIMESTAMP|UNKNOWN_DEVICE|INVALID_SIGNATURE|REPLAY_DETECTED|INTERNAL_ERROR",
+  "message": "human readable message"
 }
 ```
 
----
+## WebSocket events
 
-## WebSocket Events (Socket.IO)
-
-Connect to `wss://your-domain.example.com` using Socket.IO client.
-
-### Server → Client
-
-#### `entropy:new`
-
-Emitted immediately after a record is validated and stored.
-
-```json
-{
-  "id":           "550e8400-...",
-  "device_id":    "esp32-001",
-  "timestamp":    1700000000,
-  "entropy_hash": "a3f1...d9c4",
-  "signature":    "4f2e...88b0",
-  "created_at":   "2025-02-25T10:00:00.000Z",
-  "verified":     true
-}
-```
-
-#### `entropy:history`
-
-Emitted in response to a `entropy:fetch_history` request.
-
-```json
-[ /* array of record objects */ ]
-```
-
-### Client → Server
-
-#### `entropy:fetch_history`
-
-```json
-{ "limit": 20 }
-```
-
----
-
-## Health Check
-
-```http
-GET /health
-```
-
-```json
-{ "ok": true, "service": "enigma-backend" }
-```
-
----
-
-## Prometheus Metrics (optional)
-
-```http
-GET /metrics
-```
-
-Requires `ENABLE_METRICS=true` in the backend environment.
-Access is restricted to internal network addresses by Nginx.
-
-**Custom metrics:**
-
-| Metric                              | Type    | Labels      |
-|-------------------------------------|---------|-------------|
-| `enigma_entropy_received_total`     | Counter | `device_id` |
-| `enigma_entropy_verified_total`     | Counter | `device_id` |
-| `enigma_entropy_rejected_total`     | Counter | `reason`    |
-| `enigma_ws_connections`             | Gauge   | –           |
+Server emits:
+- `entropy:new`
+- `system:stats`
+- `trng:state`
+- `device:status`
+- `image:stream`
