@@ -22,6 +22,11 @@ Base URL (local): `http://localhost:3000`
 | GET | `/api/v1/image-streams/:device_id/latest` | Latest stream for device |
 | GET | `/api/v1/image-streams/:device_id/history?limit=20` | Stream history for device |
 
+Notes:
+- `POST /api/v1/image-streams/capture` includes `next_capture_in` (seconds) in `data`.
+- `GET /latest` and `GET /history` can include `next_capture_in` when called with `?next_capture_in=1`.
+- Optional `capture_interval_s=<seconds>` can be provided with `next_capture_in=1` to override the default interval for that response.
+
 ## System endpoints
 
 | Method | Path | Purpose |

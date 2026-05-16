@@ -118,13 +118,21 @@ router.post('/submit-hash', async (req, res) => {
   const { hash } = req.body;
   const blockchain = require('../services/blockchain');
   
-  if (!hash) return res.status(400).json({ error: "Missing 'hash' in body" });
+  if (!hash) {
+    return res.status(400).json({
+      ok: false,
+      code: 'VALIDATION_ERROR',
+      message: "Missing 'hash' in body",
+    });
+  }
 
   try {
-    const txHash = await blockchain.storeHashOnChain('MANUAL-API', Date.now(), hash);
-    res.status(202).json({ txHash, status: 'submitted' });
+    const txHash = await blockchain.storeRecord('MANUAL-API', Math.floor(Date.now() / 1000), hash);
+    return res.status(202).json({ ok: true, status: 'submitted', tx_hash: txHash });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    const code = err.code || 'INTERNAL_ERROR';
+    const status = code === 'BLOCKCHAIN_UNAVAILABLE' || code === 'CONTRACT_UNAVAILABLE' ? 503 : 500;
+    return res.status(status).json({ ok: false, code, message: err.message || 'Blockchain submit failed' });
   }
 });
 

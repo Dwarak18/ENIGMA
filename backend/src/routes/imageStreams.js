@@ -18,8 +18,20 @@ const {
   getImageStreamHistory,
 } = require('../services/imageStreamService');
 
-function serializeStream(stream, device_id = stream.device_id) {
-  return {
+const CAPTURE_INTERVAL_SECONDS = parseInt(process.env.CAPTURE_INTERVAL_SECONDS || '10', 10);
+
+function computeNextCaptureIn(timestamp) {
+  const interval = Number.isFinite(CAPTURE_INTERVAL_SECONDS) && CAPTURE_INTERVAL_SECONDS > 0
+    ? CAPTURE_INTERVAL_SECONDS
+    : 10;
+  const ts = Number(timestamp);
+  if (!Number.isFinite(ts)) return interval;
+  const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - ts);
+  return Math.max(0, interval - elapsed);
+}
+
+function serializeStream(stream, device_id = stream.device_id, includeCaptureMeta = false) {
+  const data = {
     id: stream.id,
     device_id,
     timestamp: Number(stream.timestamp),
@@ -33,6 +45,39 @@ function serializeStream(stream, device_id = stream.device_id) {
     byte_size: stream.byte_size,
     created_at: stream.created_at,
   };
+
+  if (includeCaptureMeta) {
+    data.next_capture_in = computeNextCaptureIn(stream.timestamp);
+  }
+
+  return data;
+}
+
+function parseCaptureInterval(queryValue) {
+  if (queryValue === undefined) return null;
+  const parsed = Number.parseInt(queryValue, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function withConfiguredCaptureMeta(data, req) {
+  const includeCaptureMeta = req.query.next_capture_in === '1';
+  if (!includeCaptureMeta) return data;
+  const requestedInterval = parseCaptureInterval(req.query.capture_interval_s);
+  if (requestedInterval === null) {
+    return { ...data, next_capture_in: computeNextCaptureIn(data.timestamp) };
+  }
+  const elapsed = Math.max(0, Math.floor(Date.now() / 1000) - Number(data.timestamp));
+  const next = Math.max(0, requestedInterval - elapsed);
+  return { ...data, next_capture_in: next };
+}
+
+function streamWithCaptureMeta(stream, device_id, req) {
+  const base = serializeStream(stream, device_id);
+  return withConfiguredCaptureMeta(base, req);
+}
+
+function streamListWithCaptureMeta(streams, device_id, req) {
+  return streams.map((stream) => withConfiguredCaptureMeta(serializeStream(stream, device_id), req));
 }
 
 router.post('/capture', async (req, res) => {
@@ -51,7 +96,7 @@ router.post('/capture', async (req, res) => {
       espTime: esp_time,
     });
 
-    return res.status(201).json({ ok: true, data: serializeStream(stream) });
+    return res.status(201).json({ ok: true, data: serializeStream(stream, device_id, true) });
   } catch (err) {
     logger.error('POST /image-streams/capture error', {
       error: err.message || String(err),
@@ -80,17 +125,15 @@ router.get('/:device_id/latest', async (req, res) => {
       return res.status(404).json({ ok: false, code: 'NOT_FOUND' });
     }
 
-    res.json({
+    return res.json({
       ok: true,
-      data: {
-        ...serializeStream(stream, device_id),
-      },
+      data: streamWithCaptureMeta(stream, device_id, req),
     });
   } catch (err) {
     logger.error('GET /image-streams/:device_id/latest error', {
       error: err.message || String(err),
     });
-    res.status(500).json({ ok: false, code: 'INTERNAL_ERROR' });
+    return res.status(500).json({ ok: false, code: 'INTERNAL_ERROR' });
   }
 });
 
@@ -112,16 +155,16 @@ router.get('/:device_id/history', async (req, res) => {
 
     const streams = await getImageStreamHistory(device_id, parseInt(limit, 10));
 
-    res.json({
+    return res.json({
       ok: true,
       count: streams.length,
-      data: streams.map(s => serializeStream(s, device_id)),
+      data: streamListWithCaptureMeta(streams, device_id, req),
     });
   } catch (err) {
     logger.error('GET /image-streams/:device_id/history error', {
       error: err.message || String(err),
     });
-    res.status(500).json({ ok: false, code: 'INTERNAL_ERROR' });
+    return res.status(500).json({ ok: false, code: 'INTERNAL_ERROR' });
   }
 });
 

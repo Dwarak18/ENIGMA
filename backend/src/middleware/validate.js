@@ -13,6 +13,7 @@ function handleValidationErrors(req, res, next) {
     return res.status(400).json({
       ok: false,
       code: 'VALIDATION_ERROR',
+      message: 'Payload validation failed',
       errors: errors.array(),
     });
   }
@@ -46,6 +47,7 @@ const entropySubmitRules = [
     .optional()
     .isHexadecimal()
     .isLength({ min: 130, max: 130 })
+    .matches(/^04[0-9a-fA-F]{128}$/)
     .withMessage('public_key must be a 130-character hex string (uncompressed P-256)'),
 
   body('rtc_time')

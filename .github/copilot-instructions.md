@@ -4,7 +4,9 @@
 
 ### Full stack (Docker)
 ```bash
+cp backend/.env.example backend/.env
 docker compose up -d --build
+docker compose exec backend node src/db/migrate.js
 docker compose ps
 docker compose down
 ```
@@ -17,14 +19,15 @@ npm run build
 npm run lint
 ```
 
-### Backend API (`backend/`, active runtime is Node/Express)
+### Backend API (`backend/`)
 ```bash
 npm install
+npm run migrate
 npm run dev
 npm start
 ```
 
-### Smart contracts (repo root, Hardhat)
+### Smart contracts (repo root)
 ```bash
 npx hardhat compile
 npx hardhat test
@@ -47,39 +50,45 @@ pip install -r requirements.txt
 python listener.py
 ```
 
-### Current testing reality
-- `backend/tests/entropy.test.js` exists, but backend `package.json` does not currently wire a test runner/dependencies for it.
-- Frontend `package.json` has no test script.
+### Current test reality
+- Hardhat is the only wired test runner in `package.json`.
+- `backend/tests/entropy.test.js` exists, but backend `package.json` does not define a test script for it.
+- Frontend has build/lint scripts, but no unit/integration test runner script.
 
 ## High-level architecture
 
-ENIGMA currently runs as a Node/Express + React + Postgres + local Hardhat stack, with optional firmware simulator and USB device listener.
+ENIGMA is a Node/Express + React + PostgreSQL + local Hardhat system, with ESP32/simulator entropy producers and an optional USB serial listener.
 
-1. **Entropy ingest flow**  
-   ESP32/simulator posts to `POST /api/v1/entropy` (`backend/src/routes/entropy.js`) → validation middleware → `entropyService.processEntropy()` for timestamp window checks, public-key resolution, ECDSA verification, DB insert, replay guard, and `entropy:new` broadcast.
+1. **Runtime composition**  
+   `backend/src/server.js` hosts REST + Socket.IO, `frontend/src/App.jsx` is the realtime UI state hub, and Docker Compose wires postgres, blockchain, backend, frontend, firmware simulator, and device-listener.
 
-2. **Camera capture flow**  
-   Frontend camera page (`frontend/src/pages/CamerasPage.jsx`) captures laptop frames and calls `POST /api/v1/image-streams/capture` → backend `imageStreamService.captureLaptopImage()` encrypts image bytes, stores metadata in `image_streams`, and returns preview/hash artifacts for UI.
+2. **Entropy ingest pipeline**  
+   `POST /api/v1/entropy` (and `/api/v1/entropy/data`) -> validation middleware -> `controllers/data.handlePostData()` -> `entropyService.processEntropy()` for skew checks, key resolution, signature verification, DB insert, replay defense, and websocket `entropy:new`.
 
-3. **Realtime dashboard flow**  
-   Socket.IO (`backend/src/websocket/index.js`) emits `system:stats`, `trng:state`, `device:status`, `entropy:new`, and `image:stream`; `frontend/src/App.jsx` is the main state hub and fans data into page components.
+3. **Device trust/presence pipeline**  
+   `tools/device_listener/listener.py` detects serial devices, runs challenge-response in `handshake.py`, then posts `/api/v1/system/device-status`; backend watchdog/TRNG state updates are managed in `entropyService`.
 
-4. **Device presence + trust flow**  
-   `tools/device_listener/listener.py` detects serial devices, runs challenge-response handshake (`handshake.py`), then posts `/api/v1/system/device-status`; backend watchdog state (not DB timestamps) is treated as online/offline source of truth.
+4. **Realtime dashboard pipeline**  
+   `backend/src/websocket/index.js` emits `system:stats`, `trng:state`, `device:status`, `entropy:new`, and `image:stream`; `frontend/src/App.jsx` consumes and fans these into pages.
 
-5. **Blockchain anchoring flow**  
-   Backend submits anchors via `backend/src/services/blockchain.js` (local Hardhat RPC), persists anchor status in `pending_blockchain`, and exposes status/config routes used by `frontend/src/pages/BlockchainPage.jsx`.
+5. **Image stream pipeline (two ingress paths)**  
+   Frontend camera capture hits `POST /api/v1/image-streams/capture` (`imageStreamService.captureLaptopImage()`), while ESP32 chunk streams are accepted via websocket `image:chunk` and reassembled by `processImageChunk()`.
 
-6. **Persistence model**  
-   `database/schema.sql` defines `devices`, `entropy_records`, `image_streams`, and `pending_blockchain`; replay protection is enforced by unique `(device_id, timestamp, entropy_hash)` index.
+6. **Blockchain anchoring pipeline**  
+   Accepted entropy hashes are queued via `services/blockchain.runAsyncStore()`, retried in `pending_blockchain`, and submitted to `RecordStorage.storeRecord(...)` on local Hardhat RPC.
+
+7. **Persistence model**  
+   `database/schema.sql` defines `devices`, `entropy_records`, `image_streams`, and `pending_blockchain`; replay prevention is the unique `(device_id, timestamp, entropy_hash)` index.
 
 ## Key conventions and project-specific patterns
 
-- **Trust active runtime entrypoints over older docs**: Docker and backend npm scripts run `backend/src/server.js` (CommonJS, port 3000). `backend/app/*.py` and some docs still describe a FastAPI/port-8000 path and are not the deployed default.
-- **Signature format contract is strict**: device signature is raw `r||s` hex (128 chars), public key is uncompressed P-256 hex (130 chars, `04||X||Y`), and backend converts to DER/SPKI in `services/verifier.js`.
-- **API error shape is meaningful**: routes generally return `{ ok: false, code, ... }` with codes like `VALIDATION_ERROR`, `STALE_TIMESTAMP`, `UNKNOWN_DEVICE`, `INVALID_SIGNATURE`, `REPLAY_DETECTED`.
-- **Timestamp freshness is enforced**: payload timestamp must be within `MAX_TIMESTAMP_SKEW_S` (default 60s) or request is rejected.
-- **Realtime status semantics**: online/offline in system endpoints/UI is derived from in-memory watchdog state from `entropyService`, not from `devices.last_seen` alone.
-- **Frontend uses two backend env names**: `VITE_BACKEND_URL` (App/socket/history paths) and `VITE_API_URL` (`useEnigmaAPI`). Keep both aligned when changing environments.
-- **Firmware build surface is explicit**: `firmware/main/CMakeLists.txt` currently builds `main.c`, `uart.c`, `crypto.c`, `rtc.c`, `utils.c`; `network.c`/`wifi.c`/`ntp.c` exist but are not currently part of that build target.
-- **TRNG blockchain constraints (from repo agent config)**: prefer local Hardhat (`localhost:8545`) and hardware-backed signing workflows for ESP32 pipeline work; avoid introducing public-chain/cloud assumptions in this repo path.
+- Active backend runtime is CommonJS Node/Express at `backend/src/server.js`; `backend/src/index.js` is not the API server entrypoint.
+- Keep API compatibility for `POST /api/v1/entropy`, `POST /api/v1/entropy/data` (alias), and `POST /api/v1/image-streams/capture`.
+- Signature contract is strict: `signature` is raw `r||s` hex (128 chars), `public_key` is uncompressed P-256 hex (130 chars, `04||X||Y`), and backend converts to DER/SPKI in `backend/src/services/verifier.js`.
+- Timestamp freshness is enforced by `MAX_TIMESTAMP_SKEW_S` (default 60 seconds), returning `STALE_TIMESTAMP` on violation.
+- Error payloads are contract-relevant and usually shaped as `{ ok: false, code, message }` (for example `VALIDATION_ERROR`, `UNKNOWN_DEVICE`, `INVALID_SIGNATURE`, `REPLAY_DETECTED`).
+- Online/offline device state and TRNG state are driven by in-memory watchdog state in `entropyService`, not by DB `last_seen` timestamps alone.
+- Frontend/backend URL wiring uses both `VITE_BACKEND_URL` and `VITE_API_URL`; keep them aligned when changing environments.
+- Blockchain defaults are local-first (`http://127.0.0.1:8545`) with retry persistence in `pending_blockchain`, not fire-and-forget chain writes.
+- Device listener handshake and backend verifier must stay aligned on P-256 + SHA-256 semantics.
+- Firmware build surface is defined in `firmware/main/CMakeLists.txt` and currently includes `main.c`, `uart.c`, `crypto.c`, `wifi.c`, `ntp.c`, and `utils.c`.
