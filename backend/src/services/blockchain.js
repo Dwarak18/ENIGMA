@@ -4,6 +4,7 @@ const { ethers } = require('ethers');
 const pool = require('../db/pool');
 const config = require('../config');
 const logger = require('../logger');
+const { recordMetric } = require('./metricsService');
 
 let provider = null;
 let wallet = null;
@@ -43,7 +44,10 @@ function initClient() {
  */
 async function storeHashOnChain(deviceId, timestamp, hash) {
   const signer = initClient();
+  const startTime = Date.now();
+  
   if (!signer) {
+    recordMetric('blockchain', false, Date.now() - startTime);
     const err = new Error('Blockchain client unavailable');
     err.code = 'BLOCKCHAIN_UNAVAILABLE';
     throw err;
@@ -63,12 +67,17 @@ async function storeHashOnChain(deviceId, timestamp, hash) {
       data: hexData
     });
     
-    logger.info('Transaction submitted!', { txHash: tx.hash });
+    const latency = Date.now() - startTime;
+    recordMetric('blockchain', true, latency);
+    
+    logger.info('Transaction submitted!', { txHash: tx.hash, latency });
     
     // We don't wait for confirmation here to keep the API fast, 
     // the retry worker will handle confirmation if needed.
     return tx.hash;
   } catch (err) {
+    const latency = Date.now() - startTime;
+    recordMetric('blockchain', false, latency);
     logger.error('Blockchain transaction failed', { error: err.message });
     throw err;
   }

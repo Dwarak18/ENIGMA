@@ -65,13 +65,15 @@ export default function App() {
   const [firmwareRtcTime, setFirmwareRtcTime] = useState(null);
   // TRNG pipeline state  { state: 'inactive'|'active'|'suspended', pipeline: [] }
   const [trngStatus, setTrngStatus] = useState({ state: 'inactive', pipeline: [] });
+  // Real-time metrics for pipeline
+  const [pipelineMetrics, setPipelineMetrics] = useState([]);
   // Toast queue: [{ id, device_id, online, rtc_time, ts }]
   const [toasts, setToasts] = useState([]);
 
   // ── Derived state ─────────────────────────────────────────────────
   const entropyScore  = useMemo(() => computeEntropyScore(latestRecord?.entropy_hash), [latestRecord]);
   const ledgerEntries = useMemo(() => records.map(adaptRecord), [records]);
-  const pipeline      = useMemo(() => buildPipeline(records, wsStatus === 'connected'), [records, wsStatus]);
+  const pipeline      = useMemo(() => pipelineMetrics.length > 0 ? pipelineMetrics : buildPipeline(records, wsStatus === 'connected'), [pipelineMetrics, records, wsStatus]);
 
   const hardware = useMemo(() => {
     const devs = systemStatus?.devices || [];
@@ -120,6 +122,15 @@ export default function App() {
     } catch (_) {}
   }, [backendUrl]);
 
+  const loadMetrics = useCallback(async () => {
+    try {
+      const r = await fetch(`${backendUrl}/api/v1/system/metrics`);
+      if (!r.ok) return;
+      const b = await r.json();
+      if (b.data?.pipeline) setPipelineMetrics(b.data.pipeline);
+    } catch (_) {}
+  }, [backendUrl]);
+
   // ── Socket.IO ─────────────────────────────────────────────────────
   useEffect(() => {
     const socket = io(backendUrl, {
@@ -131,6 +142,7 @@ export default function App() {
       setWsStatus('connected');
       loadHistory();
       loadSystemStatus();
+      loadMetrics();
     });
 
     socket.on('disconnect', () => {
@@ -186,13 +198,20 @@ export default function App() {
     return () => {
       socket.disconnect();
     };
-  }, [backendUrl, loadHistory, loadSystemStatus]);
+  }, [backendUrl, loadHistory, loadSystemStatus, loadMetrics]);
 
   // ── Countdown timer ───────────────────────────────────────────────
   useEffect(() => {
     const t = setInterval(() => setNextCaptureIn((p) => (p <= 0 ? 10 : p - 1)), 1000);
     return () => clearInterval(t);
   }, []);
+
+  // ── Periodic metrics polling ──────────────────────────────────────
+  useEffect(() => {
+    if (wsStatus !== 'connected') return;
+    const metricsInterval = setInterval(() => loadMetrics(), 2000);
+    return () => clearInterval(metricsInterval);
+  }, [wsStatus, loadMetrics]);
 
   // ── Verify handler ────────────────────────────────────────────────
   const handleVerify = useCallback((query) => {
@@ -321,7 +340,7 @@ export default function App() {
           )}
 
           {activePage === 'ledger' && (
-            <LedgerPage ledgerEntries={ledgerEntries} />
+            <LedgerPage ledgerEntries={ledgerEntries} backendUrl={backendUrl} />
           )}
 
           {activePage === 'time' && (

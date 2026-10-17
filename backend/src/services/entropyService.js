@@ -8,6 +8,7 @@ const pool           = require('../db/pool');
 const { verifySignature } = require('./verifier');
 const logger         = require('../logger');
 const config         = require('../config');
+const { recordMetric } = require('./metricsService');
 
 /* ── Device public-key cache ──────────────────────────────────────────
  * Avoids a DB round-trip on every request for known devices.
@@ -205,6 +206,8 @@ async function resolvePublicKey(deviceId, payloadPubkey) {
  * @returns {Promise<Object>} the stored record
  */
 async function processEntropy(payload) {
+  const processStartTime = Date.now();
+  
   const {
     device_id,
     timestamp,
@@ -224,16 +227,19 @@ async function processEntropy(payload) {
   const skew      = Math.abs(serverNow - timestamp);
   if (skew > config.security.maxTimestampSkewSeconds) {
     logger.warn('Stale timestamp rejected', { device_id, timestamp, skew });
+    recordMetric('time', false, Date.now() - processStartTime);
     const err = new Error(`Timestamp is ${skew}s old (max ${config.security.maxTimestampSkewSeconds}s)`);
     err.statusCode = 400;
     err.code = 'STALE_TIMESTAMP';
     throw err;
   }
+  recordMetric('time', true, Date.now() - processStartTime);
 
   /* ── Resolve public key ─────────────────────────────────────────── */
   const pubkey = await resolvePublicKey(device_id, public_key);
   if (!pubkey) {
     logger.warn('Unknown device – no public key available', { device_id });
+    recordMetric('sign', false, Date.now() - processStartTime);
     const err = new Error('Device not registered and no public_key provided');
     err.statusCode = 400;
     err.code = 'UNKNOWN_DEVICE';
@@ -241,19 +247,25 @@ async function processEntropy(payload) {
   }
 
   /* ── Signature verification ─────────────────────────────────────── */
+  const signStartTime = Date.now();
   const valid = verifySignature(pubkey, entropy_hash, signature);
+  const signLatency = Date.now() - signStartTime;
+  
   if (!valid) {
     logger.warn('Signature verification FAILED', { device_id });
+    recordMetric('sign', false, signLatency);
     const err = new Error('Signature verification failed');
     err.statusCode = 400;
     err.code = 'INVALID_SIGNATURE';
     throw err;
   }
+  recordMetric('sign', true, signLatency);
 
   logger.info('Signature verified', { device_id });
 
   /* ── Persist to DB (replay guard via unique index) ──────────────── */
   let record;
+  const persistStartTime = Date.now();
   try {
     const res = await pool.query(`
       INSERT INTO entropy_records (device_id, timestamp, entropy_hash, signature, aes_ciphertext, aes_iv, rtc_time, image_encrypted, image_iv, image_hash)
@@ -263,7 +275,9 @@ async function processEntropy(payload) {
         aes_ciphertext || null, aes_iv || null, rtc_time || null,
         image_encrypted || null, image_iv || null, image_hash || null]);
     record = res.rows[0];
+    recordMetric('ledger', true, Date.now() - persistStartTime);
   } catch (dbErr) {
+    recordMetric('ledger', false, Date.now() - persistStartTime);
     if (dbErr.code === '23505') {   /* unique_violation */
       logger.warn('Replay attack detected', { device_id, timestamp, entropy_hash });
       const err = new Error('Duplicate record – replay attack detected');

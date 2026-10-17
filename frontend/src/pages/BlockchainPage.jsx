@@ -20,6 +20,7 @@ export default function BlockchainPage({ records, latestRecord, firmwareRtcTime 
   const [anchoredRecords, setAnchoredRecords] = useState([]);
   const [onChainCount, setOnChainCount] = useState('—');
   const [isConnecting, setIsConnecting] = useState(false);
+  const [selectedRecord, setSelectedRecord] = useState(null);  // Detail modal state
 
   const backendUrl = getDefaultBackendUrl();
 
@@ -167,12 +168,14 @@ export default function BlockchainPage({ records, latestRecord, firmwareRtcTime 
               </thead>
               <tbody>
                 {anchoredRecords.map((r, idx) => (
-                  <tr key={idx} style={{ borderTop: '1px solid #27272a', fontSize: '12px' }}>
+                  <tr key={idx} style={{ borderTop: '1px solid #27272a', fontSize: '12px', cursor: 'pointer' }} 
+                      onClick={() => setSelectedRecord(r)}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(59, 130, 246, 0.08)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = ''}>
                     <td style={{ padding: '12px 16px' }}>
                       <a 
                         href={`#`} 
-                        target="_blank" 
-                        rel="noreferrer"
+                        onClick={(e) => e.preventDefault()}
                         style={{ color: '#3b82f6', fontFamily: 'monospace', textDecoration: 'none' }}
                       >
                         {formatHash(r.tx_hash, 8)}
@@ -200,6 +203,69 @@ export default function BlockchainPage({ records, latestRecord, firmwareRtcTime 
         <strong>⬡ Immutable Anchoring Active</strong> — This system automatically anchors every hardware record to the Local Blockchain. 
         Confirmation happens once the transaction is included in a block.
       </div>
+
+      {/* Record Detail Modal */}
+      {selectedRecord && (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center',
+          justifyContent: 'center', zIndex: 1000, backdropFilter: 'blur(4px)',
+        }} onClick={() => setSelectedRecord(null)}>
+          <div style={{
+            background: '#0a0a0a', border: '1px solid #27272a', borderRadius: '4px',
+            padding: '24px', maxWidth: '600px', width: '90%',
+            boxShadow: '0 20px 50px rgba(0,0,0,0.5)',
+          }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h2 style={{ fontSize: '16px', fontWeight: 'bold', color: '#fafafa' }}>BLOCKCHAIN RECORD DETAILS</h2>
+              <button onClick={() => setSelectedRecord(null)} style={{
+                background: 'none', border: 'none', fontSize: '20px', color: '#71717a',
+                cursor: 'pointer', padding: '4px 8px'
+              }}>✕</button>
+            </div>
+            
+            <div className="space-y-4">
+              <div style={{ background: '#09090b', border: '1px solid #27272a', padding: '12px', borderRadius: '2px' }}>
+                <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>Transaction Hash</div>
+                <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#3b82f6', wordBreak: 'break-all' }}>
+                  {selectedRecord.tx_hash}
+                </div>
+              </div>
+
+              <div style={{ background: '#09090b', border: '1px solid #27272a', padding: '12px', borderRadius: '2px' }}>
+                <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>Entropy Hash</div>
+                <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#10b981', wordBreak: 'break-all' }}>
+                  {selectedRecord.entropy_hash}
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                <div style={{ background: '#09090b', border: '1px solid #27272a', padding: '12px', borderRadius: '2px' }}>
+                  <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>Confirmed At</div>
+                  <div style={{ fontSize: '11px', color: '#d4d4d8' }}>
+                    {new Date(selectedRecord.confirmed_at).toISOString().replace('T', ' ').slice(0, 19)} UTC
+                  </div>
+                </div>
+                <div style={{ background: '#09090b', border: '1px solid #27272a', padding: '12px', borderRadius: '2px' }}>
+                  <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>Status</div>
+                  <StatusBadge status="confirmed" />
+                </div>
+              </div>
+
+              <div style={{ background: '#09090b', border: '1px solid #27272a', padding: '12px', borderRadius: '2px' }}>
+                <div style={{ fontSize: '10px', color: '#71717a', marginBottom: '6px', textTransform: 'uppercase' }}>Device ID</div>
+                <div style={{ fontSize: '12px', fontFamily: 'monospace', color: '#a1a1aa' }}>
+                  {selectedRecord.device_id || '—'}
+                </div>
+              </div>
+
+              <div style={{ fontSize: '11px', color: '#52525b', background: 'rgba(16,185,129,0.05)', padding: '10px', borderRadius: '2px', border: '1px solid rgba(16,185,129,0.2)' }}>
+                ✓ This record has been verified and permanently anchored to the blockchain.
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

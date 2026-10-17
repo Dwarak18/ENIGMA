@@ -12,15 +12,15 @@
 #define DEVICE_ID              "esp32-001"
 
 /* ── Wi-Fi Credentials ───────────────────────────────── */
-#define WIFI_SSID              "Bala"       /* ← fill in your WiFi name */
-#define WIFI_PASSWORD          "v2i4d0h3u"   /* ← fill in your WiFi password */
+#define WIFI_SSID              "LAKSHMIPATHY_BSNLFIBER"  /* Active host Wi-Fi SSID */
+#define WIFI_PASSWORD          "413@2112" /* Set locally; do not commit real creds */
 #define WIFI_MAX_RETRY         10
 
 /* ── Backend Endpoint ────────────────────────────────── */
-/* Laptop Wi-Fi IP; ESP32 posts directly to the Node backend on port 3000. */
-#define BACKEND_HOST           "http://10.83.47.80:3000"
+/* Host LAN IP (served via frontend/Nginx on port 80). */
+#define BACKEND_HOST           "http://192.168.1.41"
 #define BACKEND_ENTROPY_PATH   "/api/v1/entropy"
-#define BACKEND_WEBSOCKET_URI  "ws://10.83.47.80:3000"
+#define BACKEND_WEBSOCKET_URI  "ws://192.168.1.41"
 #define HTTP_TIMEOUT_MS        10000
 
 /* ── Crypto Secrets ─────────────────────────────────── */

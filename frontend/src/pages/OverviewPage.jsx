@@ -91,13 +91,13 @@ export default function OverviewPage({
         <MetricCard label="NEXT CAPTURE" value={nextCaptureIn} unit="sec" />
         <MetricCard
           label="TOTAL RECORDS"
-          value={systemStatus?.totalRecords ?? ledgerEntries.length}
+          value={systemStatus?.totalRecords ?? 0}
           unit="entries"
           trend="up"
         />
         <MetricCard
           label="VERIFIED"
-          value={systemStatus?.verifiedRecords ?? ledgerEntries.filter(e => e.signatureStatus === 'signed').length}
+          value={systemStatus?.verifiedRecords ?? 0}
           unit="records"
           trend="neutral"
         />

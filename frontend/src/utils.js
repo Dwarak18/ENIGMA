@@ -86,8 +86,8 @@ export const buildPipeline = (records, wsConnected) => {
     { id: 'hash',    name: 'Hashing',        status: ok&&hasRec?'success':'idle',                  latency: 22,   successRate: 100  },
     { id: 'time',    name: 'Trusted Time',   status: ok&&hasRec?'success':'idle',                  latency: 14,   successRate: 99.9 },
     { id: 'sign',    name: 'HW Signing',     status: hasSig?'success':ok?'processing':'idle',      latency: 65,   successRate: 99.6 },
-    { id: 'ledger2', name: 'Ledger Entry',   status: hasRec?'success':'idle',                      latency: 31,   successRate: 100  },
-    { id: 'anchor',  name: 'Blockchain',     status: hasRec?'pending':'idle',                      latency: 2300, successRate: 98.2 },
+    { id: 'ledger',  name: 'Ledger Entry',   status: hasRec?'success':'idle',                      latency: 31,   successRate: 100  },
+    { id: 'blockchain', name: 'Blockchain',     status: hasRec?'warning':'idle',                   latency: 2300, successRate: 98.2 },
   ];
 };
 

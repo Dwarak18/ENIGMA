@@ -13,6 +13,7 @@ const router  = express.Router();
 const pool    = require('../db/pool');
 const logger  = require('../logger');
 const { getDeviceStatuses, forceDeviceStatus } = require('../services/entropyService');
+const { getPipelineWithMetrics } = require('../services/metricsService');
 
 /* Track service start time */
 const SERVICE_START = Date.now();
@@ -165,6 +166,17 @@ router.get('/blockchain-config', (_req, res) => {
         'function records(string) external view returns (string deviceId, uint256 timestamp, string entropyHash, uint256 blockNumber)',
         'event RecordAnchored(string indexed deviceId, uint256 indexed timestamp, string entropyHash, uint256 blockNumber)'
       ]
+    }
+  });
+});
+
+/* ── GET /api/v1/system/metrics ──────────────────────────────────────── */
+router.get('/metrics', (_req, res) => {
+  return res.json({
+    ok: true,
+    data: {
+      pipeline: getPipelineWithMetrics(),
+      timestamp: Date.now(),
     }
   });
 });

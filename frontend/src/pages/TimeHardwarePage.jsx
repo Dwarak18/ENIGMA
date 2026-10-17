@@ -238,7 +238,7 @@ export default function TimeHardwarePage({ hardware, systemStatus, latestRecord,
           </div>
         ) : (
           <div style={{ fontSize: '13px', color: '#52525b' }}>
-            Waiting for device to connect on COM7…
+            {deviceOnline ? 'Waiting for first entropy submission...' : 'Waiting for device to connect...'}
           </div>
         )}
       </div>

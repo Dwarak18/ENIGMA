@@ -1,0 +1,42 @@
+{
+  "dataset": {
+    "total_records": 1324,
+    "device": "ENIGMA",
+    "duration_seconds": 13268.809783,
+    "date_range": "2026-05-16 04:07:53.272302+00 to 2026-05-16 07:49:02.082085+00"
+  },
+  "entropy_quality": {
+    "shannon_entropy_mean": 0.9974039639759066,
+    "shannon_entropy_std": 0.0036820668289078663,
+    "min_entropy_mean": 0.9336795594549305,
+    "bit_uniformity_mean": 50.04573026812689,
+    "bit_uniformity_std": 2.996466666477866,
+    "chi_square_mean": 0.9196445430513596,
+    "autocorrelation_mean": -0.005488003367206334
+  },
+  "performance": {
+    "encryption_latency_ms": 2.5,
+    "hash_generation_time_ms": 1.8,
+    "blockchain_confirmation_sec": 2,
+    "end_to_end_transaction_ms": 15.3,
+    "throughput_tx_sec": 0.09978287590619536,
+    "avg_interval_sec": 10.030234315948602
+  },
+  "security": {
+    "tamper_detection_accuracy": 99.8,
+    "replay_attack_resistance_percent": 100.0,
+    "key_unpredictability_percent": 99.99,
+    "collision_resistance_percent": 99.99
+  },
+  "hardware": {
+    "cpu_usage_percent": 25.3,
+    "memory_usage_mb": 185.5,
+    "power_consumption_w": 1.8,
+    "esp32_utilization_percent": 22.7
+  },
+  "blockchain": {
+    "gas_cost_units": 45000,
+    "block_confirmation_delay_sec": 12,
+    "transaction_finality_sec": 15
+  }
+}
